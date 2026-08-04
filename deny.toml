@@ -1,0 +1,68 @@
+# cargo-deny configuration — supply-chain gate. Permissive licenses only.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+# Run locally:  cargo install cargo-deny && cargo deny check
+# CI runs `cargo deny check` on every PR (see .github/workflows/ci.yml).
+
+[graph]
+# Evaluate the dependency graph with all features we may ship enabled.
+all-features = true
+
+[advisories]
+version = 2
+# RustSec advisory DB: fail on vulnerabilities and unmaintained crates.
+# To temporarily accept a known issue, add its ID here WITH a comment + rationale.
+ignore = [
+    # `paste` is unmaintained (no vuln). It is a build-time proc-macro pulled in
+    # transitively by `metal`/`wgpu-hal` (the vulkan + metal GPU backends) and is
+    # not in our runtime; there is no maintained drop-in and the version is pinned
+    # by wgpu. Revisit when wgpu drops it. https://rustsec.org/advisories/RUSTSEC-2024-0436
+    "RUSTSEC-2024-0436",
+    # `bincode` 1.3.3 is unmaintained (no vuln) — its team ceased development and the advisory
+    # itself states 1.3.3 is "a complete version not in need of any updates". It is a DEV-ONLY
+    # dependency: `algo-pearl` (and, transitively, `stratum`) use it solely to gate the Pearl
+    # `PlainProof` bincode wire bytes against the upstream reference KAT. Not in any runtime path.
+    # https://rustsec.org/advisories/RUSTSEC-2025-0141
+    "RUSTSEC-2025-0141",
+    # `rustls-pemfile` 2.2.0 is unmaintained (no vuln) — its code was folded into
+    # `rustls-pki-types` and the latest release is a thin wrapper around it. It is pulled
+    # transitively by `tonic` 0.12 (the gRPC/V2 pool transport) for client-cert PEM
+    # parsing; we use webpki roots + ring and never load PEMs at runtime, and there is no
+    # safe upgrade available. Revisit when tonic drops it. https://rustsec.org/advisories/RUSTSEC-2025-0134
+    "RUSTSEC-2025-0134",
+]
+
+[licenses]
+version = 2
+# Only permissive, redistribution-friendly licenses for
+# third-party deps. This list is derived from the actual dependency tree
+# (`cargo metadata` over 267 packages, 29 distinct SPDX expressions, all targets).
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+# Both crates in this workspace are Apache-2.0, so first-party crates are checked too.
+private = { ignore = false }
+
+[bans]
+# Surface (don't fail on) duplicate versions and wildcard deps as hygiene signal.
+multiple-versions = "warn"
+wildcards = "warn"
+# Intra-workspace path deps are declared without a version; that's expected here.
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io is allowed as a registry; unknown git sources are rejected.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

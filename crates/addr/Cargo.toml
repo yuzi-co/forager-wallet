@@ -1,0 +1,46 @@
+[package]
+name = "forager-addr"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = true
+repository = "https://github.com/yuzi-co/forager-wallet"
+description = "Cryptocurrency payout-address classification: decode an address, report its family."
+keywords = ["address", "bech32", "base58", "bitcoin", "validation"]
+categories = ["cryptography::cryptocurrencies"]
+
+# Payout-address classification: decode an address and report which family it belongs to.
+# Deliberately contains no key material, no entropy source and no curve arithmetic — the closed
+# miner links this crate, and that is what lets the shipped binary claim it cannot generate a key.
+# The dependency list is guarded by `tests/hygiene.rs`. See
+# the repository README.
+#
+# The manifest carries literal `edition`/`license`/`publish` rather than workspace inherits: this
+# crate is extracted to the public forager-wallet repository, which has no such workspace.
+[dependencies]
+# base58check checksums.
+sha2 = { workspace = true }
+# Base58 is not a power-of-two alphabet, so decoding needs bignum arithmetic. Pure arithmetic
+# crates: no entropy source, no curve, no network. Keeping them here does not weaken the claim
+# above, which is about key generation, not about integers.
+num-bigint = "0.4"
+num-traits = "0.2"
+
+# Copied from the workspace `[workspace.lints]` rather than inherited, for the same reason as
+# `edition`/`license` above.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+uninlined_format_args = "warn"
+semicolon_if_nothing_returned = "warn"
+manual_let_else = "warn"
+dbg_macro = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+map_unwrap_or = "warn"
+manual_assert = "warn"
+match_same_arms = "warn"
+redundant_clone = "warn"

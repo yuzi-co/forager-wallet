@@ -1,0 +1,172 @@
+//! Known-answer tests for the BIP39/BIP44 HD generator ([`forager_wallet::hd`]).
+//!
+//! **Non-circularity.** The expected address/WIF constants below were produced by an *independent*
+//! reference oracle (a from-scratch Python implementation of PBKDF2-HMAC-SHA512 seed derivation,
+//! BIP32 CKDpriv, secp256k1, and base58check) that was itself validated against two canonical,
+//! published vectors before it was trusted: (a) the BIP39 seed for the 24-word all-zero-entropy
+//! mnemonic + passphrase `"TREZOR"`, taken verbatim from the official `trezor/python-mnemonic`
+//! `vectors.json` and re-asserted here directly via `bip32::Mnemonic::to_seed`; and (b) BIP32
+//! test-vector 1 (seed `000102…0f` → master key/chain code).
+//!
+//! Version bytes come from each coin's `chainparams.cpp` (`base58Prefixes[PUBKEY_ADDRESS]` /
+//! `[SECRET_KEY]`, mainnet); SLIP-44 coin types from `slip-0044.md`.  `forager_wallet::hd::derive` (which
+//! routes through the `bip32` crate) is a third, independent stack; agreement across all three
+//! anchors the values.
+//!
+//! `bip32::Mnemonic` is 24-word (256-bit) only, so the canonical test mnemonic here is the 24-word
+//! all-zero-entropy vector (`abandon` ×23 + `art`), not the shorter 12-word form.
+
+use forager_wallet::hd;
+
+/// Canonical BIP39 24-word all-zero-entropy mnemonic (`abandon` ×23 + `art`).
+const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Anchor #1: the mnemonic->seed step reproduces the official Trezor BIP39 vector.
+#[test]
+fn bip39_canonical_seed_vector() {
+    let mnemonic = bip32::Mnemonic::new(ABANDON, Default::default()).unwrap();
+    let seed = mnemonic.to_seed("TREZOR");
+    assert_eq!(
+        hex(seed.as_bytes()),
+        "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd309717\
+         0af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8"
+    );
+}
+
+/// Assert a coin derives the expected address AND WIF at the standard path
+/// `m/44'/slip44'/0'/0/0` from the canonical mnemonic with no passphrase.
+fn check(sym: &str, expect_addr: &str, expect_wif: &str) {
+    let coin = hd::lookup(sym).unwrap_or_else(|| panic!("{sym} must be HD-capable"));
+    let slip44 = coin.hd_slip44.expect("an HD-capable row carries a slip44");
+    let acct = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
+    assert_eq!(acct.path, format!("m/44'/{slip44}'/0'/0/0"), "{sym} path");
+    assert_eq!(acct.address, expect_addr, "{sym} address");
+    assert_eq!(acct.wif, expect_wif, "{sym} wif");
+}
+
+// ---- Per-coin address+WIF KATs at m/44'/slip44'/0'/0/0 (mnemonic = ABANDON, no passphrase) ----
+
+#[test]
+fn btc_bip44_vector() {
+    check(
+        "btc",
+        "1KBdbBJRVYffWHWWZ1moECfdVBSEnDpLHi",
+        "L42rpqMcjt1LtyvZCSTLkaif5mjFyTXTHSVuckRZEM7GaD2KLCkc",
+    );
+}
+
+#[test]
+fn ltc_bip44_vector() {
+    check(
+        "ltc",
+        "LUmq6tzbxhCQe8NwdkkRuR7emEbQGyYVBA",
+        "T7LNeds5xBzWqFge9C7tHqhfnhxtfMChwWchehWnksXjCT6QeS8o",
+    );
+}
+
+#[test]
+fn doge_bip44_vector() {
+    check(
+        "doge",
+        "DL1DoPj4HvpnRT9n3YfCkhHXe5287wMyWD",
+        "QSMmFVLHzpT2i4L8rUHZNZUyq2y9gLVbX2CtqTn3wqknJJwAJtRu",
+    );
+}
+
+#[test]
+fn rvn_bip44_vector() {
+    check(
+        "rvn",
+        "RY8N6w2WDisbZLGoFbfzrMmAibgVMXQ6f8",
+        "Kzov2mjrBN6iyDs5MfTgWKu4p1CAQyPy4rkUN9UjJQxNuLcWo3UZ",
+    );
+}
+
+#[test]
+fn zec_transparent_bip44_vector() {
+    check(
+        "zec",
+        "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F",
+        "KyJMEVEzCwzDf9SuefFaMEiPBg44BLCtFpyEsaomWVGGQYtxLopP",
+    );
+}
+
+#[test]
+fn btg_bip44_vector() {
+    check(
+        "btg",
+        "GaWb7TbRjWWTAMSJNBWmLr5QL6uJPRcmr9",
+        "L1REG9i1nQ7WuVciJu2VKKzNVd6Kheekizr1xNP3e3aeJrMfzvNc",
+    );
+}
+
+#[test]
+fn kmd_bip44_vector() {
+    check(
+        "kmd",
+        "RXmrbdP1wDZZ2KQexsivDxv4dAT74HpBTi",
+        "Ur8znKEToatV3Wmwg92a4W94VZj9p1CDjfdEtQJWYsG8RxMa7965",
+    );
+}
+
+#[test]
+fn btcz_transparent_bip44_vector() {
+    check(
+        "btcz",
+        "t1dUuY8Xukc3q9yS2ywEKoZbGVA7kFmpP6v",
+        "L3WNS55UpurfHNqRKnvn6mzchMVSHMK52nfE1ob8eVTzqz8JFY4T",
+    );
+}
+
+#[test]
+fn zer_transparent_bip44_vector() {
+    check(
+        "zer",
+        "t1N23kXeyVyE2SY8KrttMYD3854EALufiZP",
+        "L13q8q4uC4eYTHHA2TiyoAYZpo7ApFutf1a1dAAmDnikw6TJdaGy",
+    );
+}
+
+// ---- passphrase + non-zero account/index path coverage ----
+
+/// BIP39 passphrase ("25th word") must change the derived key -> anchored to the TREZOR-passphrase
+/// seed asserted above.
+#[test]
+fn passphrase_changes_derivation() {
+    let coin = hd::lookup("btc").unwrap();
+    let plain = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
+    let with_pp = hd::derive(ABANDON, "TREZOR", coin, 0, 0).unwrap();
+    assert_ne!(plain.address, with_pp.address);
+    assert_eq!(with_pp.address, "12Wr5H8qyTZ3XwpwZDJDjdimS1doBoj19u");
+    assert_eq!(
+        with_pp.wif,
+        "L27mgHbgtBRaRtQYpLaorkg5GTyn3TBbxrRiDMLo54dKBkinWZ18"
+    );
+}
+
+/// account and index levels of the path are honoured (BTC, account 1, index 5).
+#[test]
+fn account_and_index_vector() {
+    let coin = hd::lookup("btc").unwrap();
+    let acct = hd::derive(ABANDON, "", coin, 1, 5).unwrap();
+    assert_eq!(acct.path, "m/44'/0'/1'/0/5");
+    assert_eq!(acct.address, "1FeubPzDiLuPy6JbPYXZ7D1Mms2hvf36AK");
+    assert_eq!(
+        acct.wif,
+        "KxT5rPzYPLrxcgdtx9pjAWijtV7ZcWXyBM8Au6JM8hTy6p1uj7AH"
+    );
+}
+
+/// A restored mnemonic reproduces the same address a standard wallet would (import round-trip).
+#[test]
+fn restore_is_deterministic() {
+    let coin = hd::lookup("zec").unwrap();
+    let a = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
+    let b = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
+    assert_eq!(a.address, b.address);
+    assert_eq!(a.wif, b.wif);
+}

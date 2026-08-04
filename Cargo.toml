@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/addr", "crates/wallet"]
+
+# Shared across both crates so the base58check checksum and the address codecs cannot drift onto
+# different SHA-2 implementations.
+[workspace.dependencies]
+sha2 = "0.10"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

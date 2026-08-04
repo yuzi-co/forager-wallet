@@ -1,0 +1,65 @@
+[package]
+name = "forager-wallet"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = true
+repository = "https://github.com/yuzi-co/forager-wallet"
+description = "Offline multi-coin payout-address and key generator. No network, no pool, no GPU."
+keywords = ["wallet", "bitcoin", "bip39", "address", "mining"]
+categories = ["cryptography::cryptocurrencies", "command-line-utilities"]
+
+# Multi-coin payout-address keygen: secp256k1 (via `k256`) + clean-room BIP340/341/350 taproot
+# bech32m and the other address codecs. Pure Rust, no C toolchain — cross-compiles cleanly under
+# the Zig path.
+#
+# The manifest carries literal `edition`/`license`/`publish` rather than workspace inherits: this
+# crate is extracted to the public forager-wallet repository, which has no such workspace.
+[dependencies]
+# secp256k1 point arithmetic (RustCrypto, pure Rust, audited, constant-time scalar math). Already
+# in the dependency graph via `bip32` (HD mode) and `algo-nexapow` — same 0.13 line and the same
+# `default-features = false, features = ["arithmetic", "std"]` selection, so no second copy of
+# `k256`/`elliptic-curve` enters the tree.
+k256 = { version = "0.13", default-features = false, features = ["arithmetic", "std"] }
+# Still used by the ed25519 (CryptoNote) curve — not by secp256k1.
+num-bigint = "0.4"
+num-traits = "0.2"
+sha2 = { workspace = true }
+# Address classification + the coin table. Split out so the closed miner can link classification
+# without linking any key-generation code. See the repository README.
+forager-addr = { path = "../addr", version = "0.1.0" }
+# Blake2b-256, for the Ergo P2PK address checksum (already used elsewhere in the workspace for
+# Equihash's consensus-critical Blake2b — same well-vetted crate, not a new supply-chain surface).
+blake2b_simd = "1"
+getrandom = "0.2"
+# BIP39/BIP44 HD mode (`hd` module, opt-in `forager-wallet new --hd`). `bip32` (iqlusion,
+# Apache-2.0/MIT, actively maintained) bundles BIP39 mnemonic↔seed and BIP32/BIP44 derivation on
+# the pure-Rust `k256` secp256k1 backend — no C toolchain, cross-compiles under the Zig path.
+# Used ONLY for HD derivation; the single-key generator stays on the crate's own clean-room curve.
+bip32 = { version = "0.5", features = ["mnemonic", "bip39", "std"] }
+# Zero private-key/seed byte buffers on drop.
+zeroize = "1"
+
+# `bip32` is also a dev-dependency so the HD KAT can assert the canonical BIP39 seed vector
+# directly (an official-vector anchor for the non-circular per-coin address KATs).
+[dev-dependencies]
+bip32 = { version = "0.5", features = ["mnemonic", "bip39", "std"] }
+
+# Copied from the workspace `[workspace.lints]` rather than inherited, for the same reason as
+# `edition`/`license` above.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+uninlined_format_args = "warn"
+semicolon_if_nothing_returned = "warn"
+manual_let_else = "warn"
+dbg_macro = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+map_unwrap_or = "warn"
+manual_assert = "warn"
+match_same_arms = "warn"
+redundant_clone = "warn"
