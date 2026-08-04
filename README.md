@@ -9,7 +9,8 @@ forager-wallet list                              # supported coins
 forager-wallet new --coin btc                    # mint an address + secret
 forager-wallet new --hd --coin btc               # BIP39 mnemonic, native SegWit (m/84')
 forager-wallet new --hd --all --purpose taproot  # every HD coin at m/86'
-forager-wallet inspect <secret-hex> --coin btc   # re-derive an address offline
+forager-wallet restore <secret-or-wif> --coin btc # re-derive from a key you hold
+forager-wallet restore --mnemonic "<24 words>" --coin btc
 ```
 
 ---
@@ -24,7 +25,9 @@ re-derivation does that.
 
 1. Generate an address and back up the secret. It is printed once and never stored.
 2. Re-derive the same address in software that is not this tool — any standard WIF importer for a
-   single key, any standard BIP39/BIP44 wallet for an `--hd` mnemonic.
+   single key, any standard BIP39 wallet for an `--hd` mnemonic. (`forager-wallet restore` re-derives
+   it too, from either the hex, the WIF, or the mnemonic — useful as a first check, but it is not
+   independent of this tool.)
 3. Confirm the two match character for character.
 4. Only then point a miner at it.
 

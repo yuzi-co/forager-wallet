@@ -6,8 +6,13 @@
 //! * `forager-wallet new --coin <ticker> [--testnet] [--legacy]`
 //!   Mint a fresh address + secret key.  `--coin` is required (run `forager-wallet list` for tickers).
 //!
-//! * `forager-wallet inspect <secret-hex> [--coin <ticker>] [--testnet] [--legacy]`
-//!   Re-derive the address for a known key (offline check; prints no secret you didn't supply).
+//! * `forager-wallet restore <secret-hex-or-wif> --coin <ticker> [--testnet] [--legacy]`
+//!   Re-derive the address for a key you already hold.  Accepts the raw 64-char hex **or** the
+//!   WIF this tool prints, so the secret it hands out is one it also reads back.  Prints no
+//!   secret you did not supply.  `inspect` / `address` are older names for the same thing.
+//!
+//! * `forager-wallet restore --mnemonic "<24 words>" (--coin <ticker> | --all) [--purpose P]`
+//!   Re-derive from a BIP39 mnemonic at the standard path (the HD form of the above).
 //!
 //! * `forager-wallet list`
 //!   Print a table of all coins supported by the wallet crate.
@@ -79,7 +84,7 @@ fn positional_after(args: &[String], start: usize) -> Option<&str> {
     None
 }
 
-/// Dispatch `forager-wallet <new|inspect|list> …`.
+/// Dispatch `forager-wallet <new|restore|list> …`.
 ///
 /// `args` is the full process argv: `args[0]` is the binary name and `args[1]` is the subcommand.
 pub fn run(args: &[String]) -> Result<(), CliError> {
@@ -101,20 +106,22 @@ pub fn run(args: &[String]) -> Result<(), CliError> {
             cmd_new(&coin, net, legacy, testnet)
         }
         None => Err(err(
-            "usage: forager-wallet <new|inspect|list> …  (run `forager-wallet list` for supported coins)",
+            "usage: forager-wallet <new|restore|list> …  (run `forager-wallet list` for supported coins)",
         )),
-        Some("inspect") | Some("address") => {
-            let coin = coin.ok_or_else(|| {
-                err("usage: forager-wallet inspect <secret-hex> --coin <ticker> [--testnet] [--legacy]")
-            })?;
-            let hexkey = positional_after(args, 2).ok_or_else(|| {
-                err("usage: forager-wallet inspect <secret-hex> --coin <ticker> [--testnet] [--legacy]")
-            })?;
-            cmd_inspect(&coin, hexkey, net, legacy)
+        // `restore` re-derives an address you already hold the secret for. With `--mnemonic` it is
+        // the HD path; otherwise it takes a single key. `inspect`/`address` are the older names for
+        // the single-key form and keep working.
+        Some("restore") if args.iter().any(|a| a == "--mnemonic") => cmd_new_hd(args),
+        Some("restore") | Some("inspect") | Some("address") => {
+            const USAGE: &str = "usage: forager-wallet restore <secret-hex-or-wif> --coin <ticker> [--testnet] [--legacy]\n   \
+                                 or: forager-wallet restore --mnemonic \"<24 words>\" (--coin <ticker> | --all) [--purpose P] [--account N] [--index N]";
+            let coin = coin.ok_or_else(|| err(USAGE))?;
+            let key = positional_after(args, 2).ok_or_else(|| err(USAGE))?;
+            cmd_inspect(&coin, key, net, legacy)
         }
         Some("list") => cmd_list(),
         Some(other) => Err(err(format!(
-            "unknown action '{other}' (expected: new | inspect <secret-hex> | list)"
+            "unknown action '{other}' (expected: new | restore <secret-hex-or-wif> | list)"
         ))),
     }
 }

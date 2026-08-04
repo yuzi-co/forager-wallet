@@ -124,7 +124,7 @@ impl std::fmt::Display for WalletError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WalletError::BadPrivKeyHex => {
-                f.write_str("private key must be 64 hex characters (32 bytes)")
+                f.write_str("private key must be 64 hex characters (32 bytes) or a WIF")
             }
             WalletError::PrivKeyOutOfRange => {
                 f.write_str("private key out of range (must be 1..n-1)")
@@ -192,7 +192,7 @@ pub fn address_from_secret_kind(
     legacy: bool,
 ) -> Result<Wallet, WalletError> {
     let spec = resolve_spec(coin)?;
-    let priv32 = parse_privkey_hex(secret_hex)?;
+    let priv32 = parse_secret(secret_hex)?;
     let d = curves::secp256k1::scalar_in_range(&priv32)?;
     build_wallet(&spec, &d, &priv32, net, legacy)
 }
@@ -372,6 +372,18 @@ pub fn address_from_hex(priv_hex: &str, net: Network) -> Result<String, WalletEr
 /// Parse a 64-hex-char (32-byte) private key into raw bytes.
 pub fn parse_privkey_hex(priv_hex: &str) -> Result<[u8; 32], WalletError> {
     hexbytes::decode_n(priv_hex.trim()).ok_or(WalletError::BadPrivKeyHex)
+}
+
+/// Parse a private key given as **either** 64-char hex **or** Wallet Import Format.
+///
+/// The generator prints a WIF as the importable secret, so it must also accept one: a user holding
+/// the secret this tool gave them should be able to re-derive their address from it.
+pub fn parse_secret(input: &str) -> Result<[u8; 32], WalletError> {
+    let s = input.trim();
+    if let Some(k) = hexbytes::decode_n::<32>(s) {
+        return Ok(k);
+    }
+    secret::from_wif(s).ok_or(WalletError::BadPrivKeyHex)
 }
 
 /// Generate a fresh Pearl payout wallet (back-compat wrapper; prefer `generate("pearl", net)`).

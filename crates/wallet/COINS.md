@@ -91,6 +91,31 @@ $ forager-wallet new --hd --coin doge --purpose bip84
 error: coin 'doge' has no bip84 address form
 ```
 
+## Generating an address from a key or mnemonic you already have
+
+`restore` re-derives an address from a secret you hold. It never invents key material and prints no
+secret you did not supply.
+
+```sh
+# From the raw 64-character hex private key
+forager-wallet restore 0000…0001 --coin btc
+
+# From the WIF this tool prints — the same string, read back
+forager-wallet restore KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn --coin btc
+
+# From a BIP39 mnemonic, at the standard path
+forager-wallet restore --mnemonic "<24 words>" --coin btc
+forager-wallet restore --mnemonic "<24 words>" --coin btc --purpose taproot
+forager-wallet restore --mnemonic "<24 words>" --all --account 1 --index 5
+```
+
+All three accept `--testnet` and `--legacy` where the coin supports them, and work with a custom
+`--coin family:params` token too. `inspect` and `address` are older names for the single-key form
+and still work.
+
+This is also how you check a generated address: mint one, then restore from the secret and confirm
+the two addresses match.
+
 ## Coins not in the table: custom tokens
 
 `--coin <family>:<params>` builds an address with a KAT-gated encoder and **your** parameters. Use
