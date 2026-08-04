@@ -35,11 +35,14 @@ The crate is `#![forbid(unsafe_code)]`.
 The closed-source Forager miner links this crate — and only this crate — so it can warn a user whose
 configured payout address belongs to a different family than the one the pool pays out in. Payouts
 sent to an address the pool cannot credit are lost, so the warning is worth a dependency; minting
-keys is not. Because key generation lives in the separate [`forager-wallet`](../wallet) crate, the
+keys is not. Because key generation lives in the separate [`forager-wallet`](https://crates.io/crates/forager-wallet) crate, the
 miner contains no key-generation code and no entropy path, and a user can verify that from its
 dependency list.
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](../../LICENSE). See the sibling crate's README for
-the trademark note.
+Licensed under the [Apache License, Version 2.0](LICENSE); a copy ships in this crate, alongside
+the [`NOTICE`](NOTICE) file. Please keep both intact when you redistribute.
+
+**Trademark.** Apache-2.0 §6 grants no trademark rights. Forager is a trademark; this license does
+not permit you to publish a fork under the Forager name.

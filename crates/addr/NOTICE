@@ -1,0 +1,13 @@
+Forager Wallet
+Copyright 2026 Vadim Yuzi
+
+This product includes software developed as part of Forager.
+
+Forager is a trademark. The Apache License, Version 2.0 grants no trademark
+rights (see section 6); this notice does not grant permission to publish a
+derivative work under the Forager name.
+
+crates/wallet/src/ripemd160.rs is a clean-room RIPEMD-160 (ISO/IEC 10118-3)
+re-derived from the published specification. It is a copy of the module used by
+the closed-source Forager miner, and is not derived from any third-party
+implementation.
