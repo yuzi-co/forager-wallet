@@ -55,8 +55,10 @@ Private keys and seeds are zeroed on drop, and the crate is `#![forbid(unsafe_co
 ## Relationship to the Forager miner
 
 Key generation used to live inside the Forager miner. It was split out so that the miner links no
-key-generation code and no entropy source at all — a property a user can check from the miner's
-dependency list rather than take on trust. The miner keeps only
+key-generation code — no mnemonic wordlist, no address minting, no path that handles a private key
+— a property a user can check from the miner's dependency list rather than take on trust. (The
+miner does link a curve and an entropy source, for proof-of-work reasons unrelated to wallets; the
+claim is about key generation only.) The miner keeps only
 [`forager-addr`](https://crates.io/crates/forager-addr), which classifies an address and warns when
 a configured payout address does not match what a pool pays out in.
 

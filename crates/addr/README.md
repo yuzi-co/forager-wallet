@@ -35,9 +35,15 @@ The crate is `#![forbid(unsafe_code)]`.
 The closed-source Forager miner links this crate — and only this crate — so it can warn a user whose
 configured payout address belongs to a different family than the one the pool pays out in. Payouts
 sent to an address the pool cannot credit are lost, so the warning is worth a dependency; minting
-keys is not. Because key generation lives in the separate [`forager-wallet`](https://crates.io/crates/forager-wallet) crate, the
-miner contains no key-generation code and no entropy path, and a user can verify that from its
-dependency list.
+keys is not. Because key generation lives in the separate
+[`forager-wallet`](https://crates.io/crates/forager-wallet) crate, the miner contains no
+key-generation code — no mnemonic wordlist, no address minting, and no path that handles a private
+key — and a user can verify that from its dependency list.
+
+Read that claim narrowly. It says the miner cannot generate or handle a key. It does not say the
+miner links no curve and no entropy source, because it links both, for reasons unrelated to
+wallets: one of its proof-of-work algorithms needs secp256k1 point arithmetic, which pulls a
+transitive `getrandom`.
 
 ## License
 

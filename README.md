@@ -50,8 +50,12 @@ Private keys and seeds are zeroed on drop. Both crates are `#![forbid(unsafe_cod
 
 The split is the point. The closed-source Forager miner links `forager-addr` and **only**
 `forager-addr`, so it can warn a user whose configured payout address belongs to a different family
-than the one the pool pays out in — while containing no key-generation code and no entropy path at
-all.
+than the one the pool pays out in — while containing no key-generation code at all: no mnemonic
+wordlist, no address minting, and no path that handles a private key.
+
+Read that narrowly, because it is the honest version. The miner does link a curve and an entropy
+source — one of its proof-of-work algorithms needs secp256k1 point arithmetic, which pulls a
+transitive `getrandom`. What is absent is key generation itself.
 
 That is not a promise you have to trust. It is checkable from the miner's dependency list, and
 `forager-addr`'s own `tests/hygiene.rs` fails the build if a curve, entropy or mnemonic crate is

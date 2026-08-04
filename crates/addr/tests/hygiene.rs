@@ -1,10 +1,12 @@
 //! Structural guard on this crate's dependency list.
 //!
-//! `wallet-addr` is the half the closed miner links. The claim in
-//! `the repository README` is that the shipped miner contains no
-//! key-generation code and no entropy path, and that a user can check that from the manifest.
-//! The claim holds only while this crate's dependency list stays minimal, so assert it rather
-//! than trusting review to notice.
+//! `forager-addr` is the half the closed miner links. The claim in the repository README is that
+//! the shipped miner contains no key-generation code, and that a user can check that from the
+//! manifest. The claim holds only while this crate's dependency list stays minimal, so assert it
+//! rather than trusting review to notice.
+//!
+//! The claim is about key generation only. The miner does link a curve and an entropy source, for
+//! reasons unrelated to wallets, so do not widen this comment into a "no curve anywhere" claim.
 
 /// The complete allowed external dependency set.
 ///
