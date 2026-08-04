@@ -32,10 +32,12 @@ The crate is `#![forbid(unsafe_code)]`.
 
 ## Why the split exists
 
-The closed-source Forager miner links this crate — and only this crate — so it can warn a user who
-has configured a Bitcoin address on a Kaspa pool. Because key generation lives in the separate
-[`forager-wallet`](../wallet) crate, the miner contains no key-generation code and no entropy path,
-and a user can verify that from its dependency list.
+The closed-source Forager miner links this crate — and only this crate — so it can warn a user whose
+configured payout address belongs to a different family than the one the pool pays out in. Payouts
+sent to an address the pool cannot credit are lost, so the warning is worth a dependency; minting
+keys is not. Because key generation lives in the separate [`forager-wallet`](../wallet) crate, the
+miner contains no key-generation code and no entropy path, and a user can verify that from its
+dependency list.
 
 ## License
 

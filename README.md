@@ -45,8 +45,9 @@ Private keys and seeds are zeroed on drop. Both crates are `#![forbid(unsafe_cod
 | [`forager-addr`](crates/addr) | Address **classification** only: decode an address, report its family. No key material, no entropy source, no curve arithmetic. |
 
 The split is the point. The closed-source Forager miner links `forager-addr` and **only**
-`forager-addr`, so it can warn a user who has configured a Bitcoin address on a Kaspa pool — while
-containing no key-generation code and no entropy path at all.
+`forager-addr`, so it can warn a user whose configured payout address belongs to a different family
+than the one the pool pays out in — while containing no key-generation code and no entropy path at
+all.
 
 That is not a promise you have to trust. It is checkable from the miner's dependency list, and
 `forager-addr`'s own `tests/hygiene.rs` fails the build if a curve, entropy or mnemonic crate is
