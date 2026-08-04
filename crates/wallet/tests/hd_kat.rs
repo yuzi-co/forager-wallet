@@ -86,6 +86,37 @@ fn rvn_bip44_vector() {
     );
 }
 
+/// VTC at `m/44'/28'/0'/0/0`. SLIP-44 coin type 28 (satoshilabs/slips, slip-0044.md).
+/// BIP44 is P2PKH, so this is the `V…` form even though `vtc new` defaults to SegWit v0.
+#[test]
+fn vtc_bip44_vector() {
+    check(
+        "vtc",
+        "VnnFBkra9iYM1Yn8iWZN5fi32goydgSnX3",
+        "KwdRZrJHwau3EwzKqNF5FaGJCpb5R6Cf6AM4ufH7rEkUpcHFqvVr",
+    );
+}
+
+/// FIRO at `m/44'/136'/0'/0/0`. SLIP-44 registers Firo under its former name ZCoin/XZC as 136.
+#[test]
+fn firo_bip44_vector() {
+    check(
+        "firo",
+        "a7R2uA9dpQbudJvdSjHKUefjKgHn4XACnV",
+        "Y94KzNB4YAdRgVMFDk5LkR2Cy4yCk8rtLRrfGR5i4oota4hgtKWa",
+    );
+}
+
+/// MEWC at `m/44'/1669'/0'/0/0`. SLIP-44 coin type 1669.
+#[test]
+fn mewc_bip44_vector() {
+    check(
+        "mewc",
+        "MRbEXiPcBcN9wTg9XHDhN5Q471vtncZDxe",
+        "HcCQ9zp4aykLsa6XSqX4yZmouaSdiYTdYRYbhQVhYz6BkV619iWf",
+    );
+}
+
 #[test]
 fn zec_transparent_bip44_vector() {
     check(

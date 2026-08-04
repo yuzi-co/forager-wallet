@@ -679,6 +679,75 @@ mod tests {
         }
     }
 
+    /// VTC SegWit v0 for privkey=1, plus the `--legacy` `V…` form.
+    /// Chain params confirmed: vertcoin-project/vertcoin-core/src/chainparams.cpp
+    ///   PUBKEY_ADDRESS=71(0x47), SECRET_KEY=128(0x80), bech32_hrp="vtc".
+    /// Addresses computed via an independent JS bech32 + base58check oracle, itself validated
+    /// against two published constants (BIP173's `bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4`
+    /// and BTC legacy `1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH`) before deriving these.
+    #[test]
+    fn vtc_segwit_v0_and_legacy_privkey_one() {
+        let w = address_from_secret("vtc", PRIV1, Network::Mainnet).unwrap();
+        assert_eq!(w.address, "vtc1qw508d6qejxtdg4y5r3zarvary0c5xw7kuk9r06");
+        assert_eq!(w.coin, "vtc");
+        match &w.secret_std {
+            // VTC shares Bitcoin's WIF byte (0x80), so the WIF is Bitcoin's for the same key.
+            SecretStd::Wif(s) => {
+                assert_eq!(s, "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn");
+            }
+            _ => panic!("expected SecretStd::Wif"),
+        }
+
+        let legacy = address_from_secret_kind("vtc", PRIV1, Network::Mainnet, true).unwrap();
+        assert_eq!(legacy.address, "Vkg6Ts44mskyD668xZkxFkjqovjXX9yUzZ");
+
+        let testnet = address_from_secret("vtc", PRIV1, Network::Testnet).unwrap();
+        assert_eq!(
+            testnet.address,
+            "tvtc1qw508d6qejxtdg4y5r3zarvary0c5xw7ktyx2us"
+        );
+    }
+
+    /// FIRO P2PKH for privkey=1.
+    /// Chain params confirmed: firoorg/firo/src/chainparams.cpp
+    ///   PUBKEY_ADDRESS=82(0x52), SECRET_KEY=210(0xd2); testnet PUBKEY_ADDRESS=65(0x41).
+    /// Address computed via the same independent JS base58check oracle described above.
+    #[test]
+    fn firo_p2pkh_privkey_one() {
+        let w = address_from_secret("firo", PRIV1, Network::Mainnet).unwrap();
+        assert_eq!(w.address, "aBPjJ4LEarrcCrd6EBRTb8jVjUZuHQFVnD");
+        assert_eq!(w.coin, "firo");
+        match &w.secret_std {
+            SecretStd::Wif(s) => {
+                assert_eq!(s, "Y4mR4tfumHPsdfnK8utYBYsHGFBzJswfBmpNWPkt7VGU91p8Yd1d");
+            }
+            _ => panic!("expected SecretStd::Wif"),
+        }
+
+        let testnet = address_from_secret("firo", PRIV1, Network::Testnet).unwrap();
+        assert_eq!(testnet.address, "TLeUZDGLWnyiJVFcp3m3M1782uBsGWa8uf");
+    }
+
+    /// MEWC P2PKH for privkey=1.
+    /// Chain params confirmed: Meowcoin-Foundation/Meowcoin/src/kernel/chainparams.cpp
+    ///   PUBKEY_ADDRESS=50(0x32), SECRET_KEY=112(0x70); testnet PUBKEY_ADDRESS=109(0x6d).
+    /// Address computed via the same independent JS base58check oracle described above.
+    #[test]
+    fn mewc_p2pkh_privkey_one() {
+        let w = address_from_secret("mewc", PRIV1, Network::Mainnet).unwrap();
+        assert_eq!(w.address, "MJaRnao1s62a2zAKSkmG582KbLKianqb7v");
+        assert_eq!(w.coin, "mewc");
+        match &w.secret_std {
+            SecretStd::Wif(s) => {
+                assert_eq!(s, "HZwd35MkcDcQ8xV2wVD2AVbYsfW4VsNREUmbfsobzbQiYaKZBbVi");
+            }
+            _ => panic!("expected SecretStd::Wif"),
+        }
+
+        let testnet = address_from_secret("mewc", PRIV1, Network::Testnet).unwrap();
+        assert_eq!(testnet.address, "m3X1szP1kjNGHZPRtWR4gX5jj6XNYKHWwN");
+    }
+
     /// DOGE P2PKH for privkey=1.
     /// Chain params confirmed: dogecoin/dogecoin/src/chainparams.cpp
     ///   PUBKEY_ADDRESS=30(0x1e), SECRET_KEY=158(0x9e).

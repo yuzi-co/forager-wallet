@@ -16,7 +16,7 @@ assert!(matches!(check("not-an-address", Family::P2pkh), Verdict::Unrecognized))
 ```
 
 Families: Taproot (bech32m), SegWit v0 (bech32), P2PKH (base58check), Ethereum (EIP-55),
-CryptoNote, Kaspa-family (CashAddr), Ergo, Alephium and XDAG, across 26 coins.
+CryptoNote, Kaspa-family (CashAddr), Ergo, Alephium and XDAG, across 29 coins.
 
 ## What this crate deliberately does not contain
 

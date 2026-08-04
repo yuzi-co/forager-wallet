@@ -189,14 +189,21 @@ mod tests {
         assert!(lookup("eth").is_none()); // Ethereum is single-key only
     }
 
-    /// `supported()` is exactly the HD-capable subset of the one coin table: the nine coins the HD
-    /// KATs cover, and nothing whose family lacks a base58 P2PKH form.
+    /// `supported()` is exactly the HD-capable subset of the one coin table: every coin that has a
+    /// SLIP-44 type and a base58 P2PKH form, and nothing whose family lacks one.
+    ///
+    /// Pinned deliberately. A coin becomes HD-capable as a side effect of gaining `hd_slip44`, so
+    /// this list changing is the signal to add HD KAT coverage for the new coin — not something to
+    /// update reflexively.
     #[test]
     fn supported_is_the_hd_capable_subset_of_coins() {
         let tickers: Vec<&str> = supported().iter().map(|c| c.ticker).collect();
         assert_eq!(
             tickers,
-            ["btc", "ltc", "doge", "rvn", "zec", "btg", "kmd", "btcz", "zer"]
+            [
+                "btc", "ltc", "vtc", "doge", "rvn", "firo", "mewc", "zec", "btg", "kmd", "btcz",
+                "zer"
+            ]
         );
         for c in supported() {
             assert!(c.hd_slip44.is_some(), "{}", c.ticker);

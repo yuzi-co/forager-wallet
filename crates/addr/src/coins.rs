@@ -231,6 +231,23 @@ pub static COINS: &[CoinSpec] = &[
             p2pkh_version_testnet: Some(&[0x6f]),
         },
     },
+    // VTC: chainparams PUBKEY_ADDRESS=71(0x47), SECRET_KEY=128(0x80), bech32_hrp="vtc"
+    //      testnet: PUBKEY_ADDRESS=74(0x4a), bech32_hrp="tvtc"
+    //      Source: vertcoin-project/vertcoin-core/src/chainparams.cpp
+    //      SegWit has been active on Vertcoin for years, so `vtc1q…` is the default and
+    //      `--legacy` renders the `V…` form, matching how BTC and LTC are handled above.
+    CoinSpec {
+        ticker: "vtc",
+        name: "Vertcoin",
+        hd_slip44: Some(28),
+        params: FamilyParams::SegwitV0 {
+            hrp: "vtc",
+            hrp_testnet: Some("tvtc"),
+            wif: 0x80,
+            p2pkh_version: &[0x47],
+            p2pkh_version_testnet: Some(&[0x4a]),
+        },
+    },
     // ---- P2PKH family ----
     // DOGE: chainparams PUBKEY_ADDRESS=30(0x1e), SECRET_KEY=158(0x9e)
     //       testnet: PUBKEY_ADDRESS=113(0x71)
@@ -257,6 +274,38 @@ pub static COINS: &[CoinSpec] = &[
             version: &[0x3c],
             version_testnet: Some(&[0x6f]),
             wif: 0x80,
+            compressed: true,
+        },
+    },
+    // FIRO: chainparams PUBKEY_ADDRESS=82(0x52), SECRET_KEY=210(0xd2), no bech32_hrp
+    //       testnet: PUBKEY_ADDRESS=65(0x41)
+    //       Source: firoorg/firo/src/chainparams.cpp
+    //       SLIP-44 registers Firo under its former name, ZCoin/XZC, as coin type 136.
+    CoinSpec {
+        ticker: "firo",
+        name: "Firo",
+        hd_slip44: Some(136),
+        params: FamilyParams::P2pkh {
+            version: &[0x52],
+            version_testnet: Some(&[0x41]),
+            wif: 0xd2,
+            compressed: true,
+        },
+    },
+    // MEWC: chainparams PUBKEY_ADDRESS=50(0x32), SECRET_KEY=112(0x70)
+    //       testnet: PUBKEY_ADDRESS=109(0x6d)
+    //       Source: Meowcoin-Foundation/Meowcoin/src/kernel/chainparams.cpp
+    //       The params also set bech32_hrp="mewc", but Meowcoin is a Ravencoin fork (it keeps
+    //       Ravencoin's SCRIPT_ADDRESS=122) and pools pay out to the `M…` form. Registering it
+    //       as P2PKH keeps payouts on the address type the network actually uses.
+    CoinSpec {
+        ticker: "mewc",
+        name: "Meowcoin",
+        hd_slip44: Some(1669),
+        params: FamilyParams::P2pkh {
+            version: &[0x32],
+            version_testnet: Some(&[0x6d]),
+            wif: 0x70,
             compressed: true,
         },
     },
