@@ -12,12 +12,14 @@
 //! * `forager-wallet list`
 //!   Print a table of all coins supported by the wallet crate.
 //!
-//! * `forager-wallet new --hd (--coin <ticker> | --all) [--account N] [--index N]
-//!     [--passphrase <str>] [--mnemonic "<24 words>"]`
-//!   HD (BIP39/BIP44) mode: derive transparent P2PKH addresses at the standard path
-//!   `m/44'/<slip44>'/<account>'/0/<index>`.  Prints the 24-word mnemonic once (stderr, with a
-//!   security warning), then `symbol  address  wif  path` per coin (stdout).  Additive to — not a
-//!   replacement for — the single-key `forager-wallet new` above.
+//! * `forager-wallet new --hd (--coin <ticker> | --all) [--purpose <bip44|bip84|bip86>]
+//!     [--account N] [--index N] [--passphrase <str>] [--mnemonic "<24 words>"]`
+//!   HD (BIP39) mode: derive at the standard path `m/<purpose>'/<slip44>'/<account>'/0/<index>`.
+//!   Without `--purpose`, each coin uses the purpose whose address type matches what the
+//!   single-key path produces for it (BIP84 for SegWit coins, BIP86 for Taproot, BIP44 for P2PKH
+//!   and Ethereum-family).  Prints the 24-word mnemonic once (stderr, with a security warning),
+//!   then `symbol  address  secret  path` per coin (stdout).  Additive to — not a replacement
+//!   for — the single-key `forager-wallet new` above.
 
 use crate::coins::Family;
 use crate::{Network, SecretStd};
@@ -214,8 +216,21 @@ fn cmd_new_hd(args: &[String]) -> Result<(), CliError> {
         ));
     }
 
-    let usage = "usage: forager-wallet new --hd (--coin <ticker> | --all) [--account N] \
-                 [--index N] [--passphrase <str>] [--mnemonic \"<24 words>\"]";
+    let usage =
+        "usage: forager-wallet new --hd (--coin <ticker> | --all) [--purpose <bip44|bip84|bip86>] \
+                 [--account N] [--index N] [--passphrase <str>] [--mnemonic \"<24 words>\"]";
+
+    // Which address type to derive. Absent, each coin uses its native purpose — the one whose
+    // address type matches what the single-key generator produces for that coin.
+    let requested_purpose = match parse_value(args, "--purpose") {
+        Some(s) => Some(crate::hd::Purpose::parse(s).ok_or_else(|| {
+            err(format!(
+                "unknown --purpose '{s}' (expected bip44 | bip84 | bip86, or the aliases \
+                 legacy | segwit | taproot)"
+            ))
+        })?),
+        None => None,
+    };
 
     let account: u32 = match parse_value(args, "--account") {
         Some(s) => s
@@ -275,22 +290,33 @@ fn cmd_new_hd(args: &[String]) -> Result<(), CliError> {
     }
     eprintln!();
 
-    // Address + WIF + path per coin, to stdout.
-    println!("{:<6}  {:<36}  {:<52}  path", "symbol", "address", "wif");
+    // Address + secret + path per coin, to stdout.
+    println!("{:<6}  {:<64}  {:<52}  path", "symbol", "address", "secret");
     for coin in coins {
-        let acct = crate::hd::derive(mnemonic.as_str(), passphrase, coin, account, index)
+        // Default to the purpose whose address type matches this coin's single-key output, so
+        // `new --coin X` and `new --hd --coin X` agree. `--purpose` overrides it.
+        let purpose = match requested_purpose {
+            Some(p) => p,
+            None => crate::hd::native_purpose(coin)
+                .ok_or_else(|| err(format!("coin '{}' has no HD address form", coin.ticker)))?,
+        };
+        let acct = crate::hd::derive(mnemonic.as_str(), passphrase, coin, purpose, account, index)
             .map_err(|e| err(e.to_string()))?;
         println!(
-            "{:<6}  {:<36}  {:<52}  {}",
-            acct.symbol, acct.address, acct.wif, acct.path
+            "{:<6}  {:<64}  {:<52}  {}",
+            acct.symbol,
+            acct.address,
+            acct.secret_str(),
+            acct.path
         );
     }
 
     println!();
     println!(
-        "Import the WIF into the coin's wallet, or restore the whole set from the mnemonic in"
+        "Restore the whole set from the mnemonic in any standard wallet, at the printed path."
     );
-    println!("any BIP44 wallet (same path). Mining needs only the address.");
+    println!("Import a single key with the secret shown (WIF, or 0x-hex for Ethereum-family).");
+    println!("Mining needs only the address.");
     Ok(())
 }
 
@@ -523,8 +549,9 @@ mod tests {
 
     #[test]
     fn hd_rejects_single_key_only_coin() {
-        // Ethereum/Monero are single-key families; not HD-capable.
-        let args = argv(&["new", "--hd", "--coin", "eth"]);
+        // Monero is a single-key family: CryptoNote has no BIP32 path. (Ethereum IS HD-capable
+        // now, at m/44'/60' — see hd::Purpose.)
+        let args = argv(&["new", "--hd", "--coin", "xmr"]);
         assert!(run(&args).is_err());
     }
 
@@ -541,7 +568,7 @@ mod tests {
         let args = argv(&["new", "--hd", "--coin", "btc", "--mnemonic", phrase]);
         assert!(run(&args).is_ok());
         let coin = crate::hd::lookup("btc").unwrap();
-        let acct = crate::hd::derive(phrase, "", coin, 0, 0).unwrap();
+        let acct = crate::hd::derive(phrase, "", coin, crate::hd::Purpose::Bip44, 0, 0).unwrap();
         assert_eq!(acct.address, "1KBdbBJRVYffWHWWZ1moECfdVBSEnDpLHi");
     }
 

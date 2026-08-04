@@ -42,10 +42,10 @@ fn bip39_canonical_seed_vector() {
 fn check(sym: &str, expect_addr: &str, expect_wif: &str) {
     let coin = hd::lookup(sym).unwrap_or_else(|| panic!("{sym} must be HD-capable"));
     let slip44 = coin.hd_slip44.expect("an HD-capable row carries a slip44");
-    let acct = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
+    let acct = hd::derive(ABANDON, "", coin, hd::Purpose::Bip44, 0, 0).unwrap();
     assert_eq!(acct.path, format!("m/44'/{slip44}'/0'/0/0"), "{sym} path");
     assert_eq!(acct.address, expect_addr, "{sym} address");
-    assert_eq!(acct.wif, expect_wif, "{sym} wif");
+    assert_eq!(acct.secret_str(), expect_wif, "{sym} wif");
 }
 
 // ---- Per-coin address+WIF KATs at m/44'/slip44'/0'/0/0 (mnemonic = ABANDON, no passphrase) ----
@@ -162,6 +162,144 @@ fn zer_transparent_bip44_vector() {
     );
 }
 
+// ---- BIP84 / BIP86 / Ethereum-family purposes ----
+
+/// Assert a coin derives the expected address AND secret at `m/<purpose>'/slip44'/0'/0/0`.
+fn check_at(sym: &str, purpose: hd::Purpose, expect_addr: &str, expect_secret: &str) {
+    let coin = hd::lookup(sym).unwrap_or_else(|| panic!("{sym} must be HD-capable"));
+    let slip44 = coin.hd_slip44.expect("an HD-capable row carries a slip44");
+    let acct = hd::derive(ABANDON, "", coin, purpose, 0, 0).unwrap();
+    assert_eq!(
+        acct.path,
+        format!("m/{}'/{slip44}'/0'/0/0", purpose.number()),
+        "{sym} {purpose} path"
+    );
+    assert_eq!(acct.address, expect_addr, "{sym} {purpose} address");
+    assert_eq!(acct.secret_str(), expect_secret, "{sym} {purpose} secret");
+}
+
+// BIP84 — native SegWit v0 at m/84'. This is what `new --hd --coin btc` now produces by default,
+// matching the address type `new --coin btc` produces.
+#[test]
+fn btc_bip84_vector() {
+    check_at(
+        "btc",
+        hd::Purpose::Bip84,
+        "bc1qzmtrqsfuaf6l6kkcsseumq26ukaphfj9skkug6",
+        "Kwej7t6aewN3Zur424Fqb2BN9eRiZ83pnA2LWJABcWDCWrtVPvZa",
+    );
+}
+
+#[test]
+fn ltc_bip84_vector() {
+    check_at(
+        "ltc",
+        hd::Purpose::Bip84,
+        "ltc1qj0xmcw3ttxgsfhzzcft9ac9nwp8smzq778lu3c",
+        "TBKLVh5eGEFa4j19b1KuLb7BHJBd4ML24J2BsEXJEjVUAKJZiNfx",
+    );
+}
+
+#[test]
+fn vtc_bip84_vector() {
+    check_at(
+        "vtc",
+        hd::Purpose::Bip84,
+        "vtc1q758cxdacrl2unt9a727hgty7c2707schku355t",
+        "Kyo7w21dfXKjqei3pXRsW37wD3SbRTuEDxc8NX4LJtWcNhFmNuGJ",
+    );
+}
+
+// BIP86 — Taproot key-path at m/86'. The oracle's Taproot tweak was anchored against this crate's
+// own `KAT_PRL` / `KAT_TPRL` pearl vectors before these values were derived.
+#[test]
+fn btc_bip86_vector() {
+    check_at(
+        "btc",
+        hd::Purpose::Bip86,
+        "bc1p68a8a3vuv2cxzs7e2gjc5v3qy3zdnfaxwftyqe9k9nquvm6r4w2ssldtzp",
+        "KwkuH29aDSdcMoafd3oSSo9BanhFtWnoTAszM2DbsZtXr4rhFDnX",
+    );
+}
+
+#[test]
+fn ltc_bip86_vector() {
+    check_at(
+        "ltc",
+        hd::Purpose::Bip86,
+        "ltc1p3a7h4sp2aj3hywnxyhc4unumqta4jjgjj9l8pmanezflvnu6xkyqf7zxgg",
+        "T3F3ojWLCWUSqqK6DvzgxerS5DJy9xhCokYRzHUvHQ9jQdUETsth",
+    );
+}
+
+#[test]
+fn vtc_bip86_vector() {
+    check_at(
+        "vtc",
+        hd::Purpose::Bip86,
+        "vtc1p74suvzx204075n6f22cmk3vd4ha86hvc333yr5l67g9j6dq5esdqhnntcq",
+        "KxEJ7B9jfEMeHLimuwAfQT5vNzjHDZyniMuXbJqcHVd7NGNPend1",
+    );
+}
+
+// Ethereum-family at BIP44. The oracle's keccak256 was anchored on keccak256("") and its EIP-55
+// checksum on the published privkey=1 address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf.
+#[test]
+fn eth_bip44_vector() {
+    check_at(
+        "eth",
+        hd::Purpose::Bip44,
+        "0xF278cF59F82eDcf871d630F28EcC8056f25C1cdb",
+        "0x1053fae1b3ac64f178bcc21026fd06a3f4544ec2f35338b001f02d1d8efa3d5f",
+    );
+}
+
+#[test]
+fn etc_bip44_vector() {
+    check_at(
+        "etc",
+        hd::Purpose::Bip44,
+        "0x6758B8ABB06e1a034cE15Cb3827C829705CcAEE1",
+        "0x6591cd7b9f113a9bb5fc5df954d6896d48809d345320fb9e9b2aca35cd6bda6d",
+    );
+}
+
+#[test]
+fn ubq_bip44_vector() {
+    check_at(
+        "ubq",
+        hd::Purpose::Bip44,
+        "0xf4FCceD95787B2583b02851f03DcaE3Fe2aC2853",
+        "0x2e1991d4c4b841cea58f7b8883b97eddc146c8b0d23191fff197ceb8e6dd1616",
+    );
+}
+
+/// A purpose a coin's family cannot encode is a clear error, not a silently wrong address.
+#[test]
+fn unsupported_purpose_is_rejected() {
+    let doge = hd::lookup("doge").unwrap();
+    assert!(hd::derive(ABANDON, "", doge, hd::Purpose::Bip84, 0, 0).is_err());
+    let eth = hd::lookup("eth").unwrap();
+    assert!(hd::derive(ABANDON, "", eth, hd::Purpose::Bip86, 0, 0).is_err());
+}
+
+/// The default purpose must give HD the same address type the single-key generator gives, or one
+/// of the two paths is quietly worse than the other.
+#[test]
+fn native_purpose_matches_single_key_address_type() {
+    for (sym, want) in [
+        ("btc", hd::Purpose::Bip84),
+        ("ltc", hd::Purpose::Bip84),
+        ("vtc", hd::Purpose::Bip84),
+        ("doge", hd::Purpose::Bip44),
+        ("firo", hd::Purpose::Bip44),
+        ("eth", hd::Purpose::Bip44),
+    ] {
+        let coin = hd::lookup(sym).unwrap();
+        assert_eq!(hd::native_purpose(coin), Some(want), "{sym}");
+    }
+}
+
 // ---- passphrase + non-zero account/index path coverage ----
 
 /// BIP39 passphrase ("25th word") must change the derived key -> anchored to the TREZOR-passphrase
@@ -169,12 +307,12 @@ fn zer_transparent_bip44_vector() {
 #[test]
 fn passphrase_changes_derivation() {
     let coin = hd::lookup("btc").unwrap();
-    let plain = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
-    let with_pp = hd::derive(ABANDON, "TREZOR", coin, 0, 0).unwrap();
+    let plain = hd::derive(ABANDON, "", coin, hd::Purpose::Bip44, 0, 0).unwrap();
+    let with_pp = hd::derive(ABANDON, "TREZOR", coin, hd::Purpose::Bip44, 0, 0).unwrap();
     assert_ne!(plain.address, with_pp.address);
     assert_eq!(with_pp.address, "12Wr5H8qyTZ3XwpwZDJDjdimS1doBoj19u");
     assert_eq!(
-        with_pp.wif,
+        with_pp.secret_str(),
         "L27mgHbgtBRaRtQYpLaorkg5GTyn3TBbxrRiDMLo54dKBkinWZ18"
     );
 }
@@ -183,11 +321,11 @@ fn passphrase_changes_derivation() {
 #[test]
 fn account_and_index_vector() {
     let coin = hd::lookup("btc").unwrap();
-    let acct = hd::derive(ABANDON, "", coin, 1, 5).unwrap();
+    let acct = hd::derive(ABANDON, "", coin, hd::Purpose::Bip44, 1, 5).unwrap();
     assert_eq!(acct.path, "m/44'/0'/1'/0/5");
     assert_eq!(acct.address, "1FeubPzDiLuPy6JbPYXZ7D1Mms2hvf36AK");
     assert_eq!(
-        acct.wif,
+        acct.secret_str(),
         "KxT5rPzYPLrxcgdtx9pjAWijtV7ZcWXyBM8Au6JM8hTy6p1uj7AH"
     );
 }
@@ -196,8 +334,8 @@ fn account_and_index_vector() {
 #[test]
 fn restore_is_deterministic() {
     let coin = hd::lookup("zec").unwrap();
-    let a = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
-    let b = hd::derive(ABANDON, "", coin, 0, 0).unwrap();
+    let a = hd::derive(ABANDON, "", coin, hd::Purpose::Bip44, 0, 0).unwrap();
+    let b = hd::derive(ABANDON, "", coin, hd::Purpose::Bip44, 0, 0).unwrap();
     assert_eq!(a.address, b.address);
-    assert_eq!(a.wif, b.wif);
+    assert_eq!(a.secret_str(), b.secret_str());
 }

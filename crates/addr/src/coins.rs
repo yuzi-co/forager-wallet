@@ -314,13 +314,13 @@ pub static COINS: &[CoinSpec] = &[
     CoinSpec {
         ticker: "etc",
         name: "Ethereum Classic",
-        hd_slip44: None,
+        hd_slip44: Some(61), // SLIP-44: satoshilabs/slips
         params: FamilyParams::Ethereum,
     },
     CoinSpec {
         ticker: "eth",
         name: "Ethereum",
-        hd_slip44: None,
+        hd_slip44: Some(60), // SLIP-44: satoshilabs/slips
         params: FamilyParams::Ethereum,
     },
     // ---- CryptoNote family ----
@@ -424,7 +424,7 @@ pub static COINS: &[CoinSpec] = &[
     CoinSpec {
         ticker: "ubq",
         name: "Ubiq",
-        hd_slip44: None,
+        hd_slip44: Some(108), // SLIP-44: satoshilabs/slips
         params: FamilyParams::Ethereum,
     },
     // EthereumPoW (ETHW) and OctaSpace (OCTA) are EVM chains that inherit Ethereum's address

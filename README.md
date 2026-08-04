@@ -7,7 +7,8 @@ cargo install forager-wallet
 
 forager-wallet list                              # supported coins
 forager-wallet new --coin btc                    # mint an address + secret
-forager-wallet new --hd --coin btc               # BIP39/BIP44, 24-word mnemonic
+forager-wallet new --hd --coin btc               # BIP39 mnemonic, native SegWit (m/84')
+forager-wallet new --hd --all --purpose taproot  # every HD coin at m/86'
 forager-wallet inspect <secret-hex> --coin btc   # re-derive an address offline
 ```
 
@@ -67,7 +68,27 @@ actually be verified.
 
 29 coins across nine address families and two curves: Taproot (bech32m), SegWit v0 (bech32), P2PKH
 (base58check), Ethereum (EIP-55), CryptoNote/Monero, Kaspa-family (CashAddr), Ergo, Alephium and
-XDAG. Run `forager-wallet list` for the current table.
+XDAG.
+
+**[crates/wallet/COINS.md](crates/wallet/COINS.md)** documents every coin with its address form and
+HD path, the three HD purposes (BIP44 / BIP84 / BIP86), and how to generate for a coin that is not
+in the table yet — the `--coin family:params` token grammar, how to read the parameters out of a
+coin's `chainparams.cpp`, worked examples for Dash, DigiByte, Neoxa and others, and the cases where
+a custom token will *not* work.
+
+Run `forager-wallet list` for the live table.
+
+### HD derivation
+
+`--hd` derives from a 24-word BIP39 mnemonic. Each coin defaults to the purpose whose address type
+matches its single-key output, so `new --coin btc` and `new --hd --coin btc` give the same kind of
+address:
+
+| `--purpose` | Path | Address |
+|---|---|---|
+| `bip44` (`legacy`) | `m/44'` | base58check P2PKH, or EIP-55 for Ethereum-family |
+| `bip84` (`segwit`) | `m/84'` | native SegWit v0 — the default for BTC, LTC, VTC |
+| `bip86` (`taproot`) | `m/86'` | Taproot key-path |
 
 ## License
 

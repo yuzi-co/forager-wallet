@@ -9,6 +9,9 @@ forager-wallet new --hd --coin btc                        # BIP39/BIP44, 24-word
 forager-wallet inspect <secret-hex> --coin btc            # re-derive an address offline
 ```
 
+**[COINS.md](COINS.md)** — every supported coin, its address form and HD path, plus how to
+generate for a coin that is not in the table yet, with worked examples.
+
 ## Verify the address before you mine to it
 
 **A wrong address means unspendable funds, and no software can undo that.** Verify, then mine.
@@ -41,7 +44,7 @@ Private keys and seeds are zeroed on drop, and the crate is `#![forbid(unsafe_co
 Key generation used to live inside the Forager miner. It was split out so that the miner links no
 key-generation code and no entropy source at all — a property a user can check from the miner's
 dependency list rather than take on trust. The miner keeps only
-[`forager-addr`](../addr), which classifies an address and warns when a configured payout
+[`forager-addr`](../wallet-addr), which classifies an address and warns when a configured payout
 address does not match what a pool pays out in.
 
 `src/ripemd160.rs` is a copy of the implementation the closed miner uses, not a third-party file.
