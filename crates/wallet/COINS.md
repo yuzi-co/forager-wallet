@@ -31,6 +31,19 @@ row from the fixed key `0000…0001` and fails the build if the address does not
 prefix written here. `HD` is the path `new --hd` uses by default; coins with no registered SLIP-44
 coin type have no HD row, because inventing one would produce a path no other wallet reproduces.
 
+**How far to trust a prefix.** An unmarked cell means **every** key mints it — not most keys, and
+not the one key the test happens to use. That is proved, not sampled. For a bech32 or CashAddr row
+the prefix is a constant the encoder emits before any key-dependent character. For a base58 row the
+test encodes both ends of the space the variable part of the payload can occupy and checks that the
+two ends agree on the characters written here; if they do, everything between them does too. A cell
+may carry exactly one of two markers, and a marker is the only way a row can claim less:
+
+- **`(most keys)`** — the prefix is known *not* to hold for every key. The test holds a private key
+  that mints something else and fails if it stops doing so. `firo` is the table's only such row.
+- **`(sampled)`** — no argument in the test decides the row either way, so the prefix is swept over
+  1024 distinct keys, which can refute it but can never establish it. No row currently needs this
+  marker; it exists so that a future one cannot pass by saying nothing.
+
 | Ticker | Coin | Family | Default address | HD path (`--hd`) |
 |---|---|---|---|---|
 | `pearl` | Pearl | Taproot | `prl1p…` | — |
@@ -41,7 +54,7 @@ coin type have no HD row, because inventing one would produce a path no other wa
 | `alpha` | Unicity Alpha | SegWit v0 | `alpha1q…` | — |
 | `doge` | Dogecoin | P2PKH | `D…` | `m/44'/3'` |
 | `rvn` | Ravencoin | P2PKH | `R…` | `m/44'/175'` |
-| `firo` | Firo | P2PKH | `a…` | `m/44'/136'` |
+| `firo` | Firo | P2PKH | `a…` (most keys) | `m/44'/136'` |
 | `mewc` | Meowcoin | P2PKH | `M…` | `m/44'/1669'` |
 | `zec` | Zcash (transparent) | P2PKH | `t1…` | `m/44'/133'` |
 | `btg` | Bitcoin Gold | P2PKH | `G…` | `m/44'/156'` |
@@ -73,11 +86,13 @@ Three rows need a word of explanation:
   `BgGZ9tcN4rm9KBzDn7KprQz87SZ1k5oUs` (33 characters) and `0000…0002` mints
   `cMh228HTCiwS8ZsaakH8A8wze1FZeuap` (32). There is no prefix to document, and printing one would be
   a lie.
-- **`firo`** — `a…` is what version byte `0x52` renders for 98.8% of keys, not for all of them. The
-  other 1.2% fall just below the base58 boundary between `Z` and `a` and render `Z…` instead:
-  `restore 0000…003e --coin firo` mints `ZzzAu2nHnHNxMea5vbLyeD4nejtXDW57wY`. Both forms are
-  ordinary Firo addresses. This is the table's **only** majority-rather-than-guaranteed prefix —
-  every other base58 row's version bytes pin the leading characters for every possible key.
+- **`firo`** — the table's only `(most keys)` row. Version byte `0x52` puts the 25-byte payload
+  astride the base58 boundary between digit 32 (`Z`) and digit 33 (`a`): the interval the payload
+  can occupy lies 1.222% below that boundary and 98.778% above it, so 98.8% of keys render `a…` and
+  1.2% render `Z…`. `restore 0000…003e --coin firo` mints `ZzzAu2nHnHNxMea5vbLyeD4nejtXDW57wY`, and
+  `0x3e` = 62 is the *smallest* private key that does — every key from 1 to 61 renders `a…`, which
+  is why minting from `0000…0001` alone never showed this. Both forms are ordinary Firo addresses,
+  and every other base58 row's version bytes do pin the leading characters for every possible key.
 
 **Testnet.** `--testnet` works where the coin defines one. `--legacy` renders the base58 form for a
 SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
