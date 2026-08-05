@@ -780,12 +780,30 @@ fn leak_bytes(v: Vec<u8>) -> &'static [u8] {
 }
 
 /// Parse a `u64` in decimal, or hex when `0x`/`0X`-prefixed.
+///
+/// Digits only: no sign. Both `str::parse::<u64>` and [`u64::from_str_radix`] accept a leading `+`,
+/// so `p2pkh:ver=0x+00` and `cryptonote:net=+18` parsed cleanly before this guard. That matters
+/// more here than it would in a general-purpose parser, because this whole path is the
+/// **unverified** escape hatch: a token's bytes are never checked against a known-answer test, so
+/// the grammar is the only thing standing between a typo and a valid-looking address that
+/// misdirects a payout. A parser that accepts input the documented grammar does not describe —
+/// `<int>`, not `[+-]<int>` — narrows that gap for no one's benefit; a version byte has no sign.
 fn parse_uint(s: &str) -> Result<u64, String> {
-    let parsed = match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        Some(hex) => u64::from_str_radix(hex, 16),
-        None => s.parse::<u64>(),
+    let (digits, radix) = match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(hex) => (hex, 16),
+        None => (s, 10),
     };
-    parsed.map_err(|_| format!("invalid integer '{s}' (use decimal, or 0x-prefixed hex)"))
+    let malformed = || format!("invalid integer '{s}' (use decimal, or 0x-prefixed hex)");
+    let digits_only = !digits.is_empty()
+        && digits.bytes().all(|b| match radix {
+            16 => b.is_ascii_hexdigit(),
+            _ => b.is_ascii_digit(),
+        });
+    if !digits_only {
+        return Err(malformed());
+    }
+    // Overflow is still `from_str_radix`'s to catch: the guard above is about shape, not range.
+    u64::from_str_radix(digits, radix).map_err(|_| malformed())
 }
 
 /// Parse a single byte (0..=255) in decimal or `0x` hex.
@@ -918,6 +936,48 @@ mod tests {
         // The spellings the grammar does define still parse.
         assert!(parse_token("p2pkh:ver=0x00,wif=0x80,uncompressed").is_ok());
         assert!(parse_token("cryptonote:net=18,net_test=53").is_ok());
+    }
+
+    /// An integer parameter is digits, with no sign.
+    ///
+    /// Both `str::parse::<u64>` and `u64::from_str_radix` accept a leading `+`, so the first block
+    /// below all parsed before the guard in [`parse_uint`]: `p2pkh:ver=0x+00` yielded version byte
+    /// `0x00` and `cryptonote:net=+18` yielded Monero's prefix, from tokens the documented grammar
+    /// (`<int>`, `<byte>`) does not describe. This is the *unverified* escape hatch — a token's
+    /// bytes never meet a known-answer test — so the grammar is the only check they get, and
+    /// accepting input it does not describe widens the one gap that matters.
+    ///
+    /// The second block was already rejected, by `from_str_radix` erroring on a negative into an
+    /// unsigned type and on an empty string. Those are properties of the callee, not decisions this
+    /// parser was making, so they are pinned here rather than left to be re-derived.
+    #[test]
+    fn an_integer_parameter_does_not_take_a_sign() {
+        for token in [
+            "p2pkh:ver=0x+00,wif=0x80",
+            "p2pkh:ver=+0,wif=0x80",
+            "p2pkh:ver=0x00,wif=+128",
+            "cryptonote:net=+18",
+            "cryptonote:net=18,net_test=+53",
+        ] {
+            assert!(parse_token(token).is_err(), "{token} must be rejected");
+        }
+        for token in [
+            "p2pkh:ver=-1,wif=0x80",
+            "p2pkh:ver=0x,wif=0x80",
+            "p2pkh:ver=,wif=0x80",
+        ] {
+            assert!(parse_token(token).is_err(), "{token} must be rejected");
+        }
+
+        // The spellings the grammar does describe are untouched, in both radices.
+        assert!(parse_token("p2pkh:ver=0x00,wif=0x80").is_ok());
+        assert!(parse_token("p2pkh:ver=0,wif=128").is_ok());
+        assert!(parse_token("p2pkh:ver=0X1E,wif=0x9E").is_ok());
+        assert_eq!(parse_uint("0x1e"), Ok(30));
+        assert_eq!(parse_uint("30"), Ok(30));
+        // Range is still checked, and separately from shape.
+        assert!(parse_byte("256").is_err());
+        assert!(parse_uint("0xfffffffffffffffff").is_err());
     }
 
     /// The unknown-family message names every family the grammar carries, so it stays correct as the
