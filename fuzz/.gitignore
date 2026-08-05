@@ -1,0 +1,15 @@
+target/
+artifacts/
+coverage/
+Cargo.lock
+
+# The seed corpus is checked in on purpose. A fuzzer that starts from real, valid addresses reaches
+# the interesting branches — checksum verified, version byte matched — in seconds; one that starts
+# from nothing spends hours learning the base58 alphabet first.
+#
+# libFuzzer writes every input it *discovers* back into the same `corpus/<target>/` directory, named
+# by SHA-1. Those are generated, so ignore everything and un-ignore the hand-picked seeds, which are
+# the files ending in `.seed`. libFuzzer reads every file in the directory regardless of its name,
+# so the extension costs nothing.
+corpus/*/*
+!corpus/*/*.seed
