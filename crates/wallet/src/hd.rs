@@ -448,11 +448,13 @@ mod tests {
             assert_eq!(Some(ps[0]), native_purpose(c), "{}", c.ticker);
         }
         // Families with no BIP32 path, or with no registered SLIP-44 type, must never appear.
-        // `pearl`, `ethw` and `octa` are absent for the second reason: SLIP-44 registers no coin
-        // type for them, and inventing one would produce a path no other wallet reproduces.
+        // `pearl`, `ethw`, `octa` and `kad` are absent for the second reason: SLIP-44 registers no
+        // coin type for them, and inventing one would produce a path no other wallet reproduces.
+        // `kad` is worth naming because it is the one of those whose family *is* HD-capable — a
+        // base58 P2PKH row — so only its missing SLIP-44 type keeps it out.
         for t in [
             "pearl", "ethw", "octa", "xmr", "kas", "kls", "spr", "erg", "alph", "xdag", "scash",
-            "alpha",
+            "alpha", "kad",
         ] {
             assert!(lookup(t).is_none(), "{t} must not be HD-capable");
         }

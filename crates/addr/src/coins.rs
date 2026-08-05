@@ -312,6 +312,31 @@ pub static COINS: &[CoinSpec] = &[
             compressed: true,
         },
     },
+    // KAD: chainparams PUBKEY_ADDRESS=45(0x2d), SECRET_KEY=176(0xb0)
+    //      testnet: PUBKEY_ADDRESS=46(0x2e), SECRET_KEY=239(0xef)
+    //      Source: kadikamateam/kadikama (MIT), src/chainparams.cpp — Kadikama Core is a Litecoin
+    //      Core fork whose proof of work is RandomX 2 (`rx/kad`).
+    //      Registered P2PKH, not SegWit v0, and the reason is worth stating because the chain
+    //      params argue the other way: Kadikama sets bech32_hrp="kad", SegwitHeight=0 and Taproot
+    //      ALWAYS_ACTIVE, so `kad1q…` is valid from genesis. What settles it is what the network
+    //      pays out in. Kadikama's own front page names "K-addresses" as one of the things that
+    //      make it a separate chain, and every miner address listed on the official pool
+    //      (mining.kadikama.xn--6frz82g, read 2026-08-05) decodes to version 45 — five sampled,
+    //      five `K…`. The same reasoning as the `mewc` row above: register the address type the
+    //      network actually uses, so a generated payout address is one a pool will credit.
+    //      `hd_slip44: None` — SLIP-44 registers no coin type for Kadikama, and Kadikama Core sets
+    //      no `nExtCoinType`, so there is no path another wallet would reproduce.
+    CoinSpec {
+        ticker: "kad",
+        name: "Kadikama",
+        hd_slip44: None,
+        params: FamilyParams::P2pkh {
+            version: &[0x2d],
+            version_testnet: Some(&[0x2e]),
+            wif: 0xb0,
+            compressed: true,
+        },
+    },
     // ---- Ethereum family ----
     // ETC shares ETH's address-derivation (EIP-55 checksummed keccak160); no chain params differ.
     CoinSpec {

@@ -382,6 +382,46 @@ mod tests {
         );
     }
 
+    /// Kadikama's version-45 P2PKH form, against addresses the network actually issued rather than
+    /// ones this repository derived. All four are miner addresses read off the official Kadikama
+    /// pool (mining.kadikama.xn--6frz82g) on 2026-08-05, and each carries a valid base58check
+    /// double-SHA256 checksum, so a wrong version byte in the coin table cannot pass this.
+    ///
+    /// A live vector is what distinguishes a correct row from a self-consistent one. The
+    /// derivation KAT in `forager-wallet` proves this crate and that one agree; only an address
+    /// the chain minted proves either of them agrees with the chain.
+    #[test]
+    fn detects_kadikama_legacy_p2pkh() {
+        for addr in [
+            "KG8izpRdZy1xZyAgddDz3wgjFyQ8DpTps8",
+            "KM5vzkGNB3z7VComUh6xo9ooVdz3h5HCbp",
+            "KDy7Bm7HszkTVHL6pHhqiBKTYCk7yuzt1R",
+            "KBpQj4K1YYqvjN9qC6sXDaPnYQzVN6t937",
+        ] {
+            assert_eq!(detect_family(addr), Some(Family::P2pkh), "{addr}");
+        }
+    }
+
+    /// Kadikama runs SegWit and Taproot from genesis (`SegwitHeight = 0`, Taproot always active)
+    /// with `bech32_hrp = "kad"`, but the coin table registers the `K…` P2PKH form, because that is
+    /// what the network pays out in. So a `kad1…` address is a real address this crate does not
+    /// model, and it must come back `Unrecognized` — the honest "cannot tell" — rather than be
+    /// silently absorbed by another coin's HRP.
+    ///
+    /// Pinned because the failure it guards is invisible: `check` never blocks, so a `kad1…`
+    /// address answered as some other family would only ever surface as a wrong warning.
+    #[test]
+    fn a_kadikama_bech32_address_is_unrecognized_not_misattributed() {
+        // bech32 P2WPKH over HRP "kad" and the hash160 of the privkey=1 pubkey — the same key the
+        // derivation KAT uses, encoded by hand for this test.
+        let kad_bech32 = "kad1qw508d6qejxtdg4y5r3zarvary0c5xw7k9jvrdv";
+        assert!(
+            bech32::verify(kad_bech32).is_some(),
+            "vector must be valid bech32"
+        );
+        assert_eq!(detect_family(kad_bech32), None);
+    }
+
     #[test]
     fn detects_bitcoin_bech32_segwit_v0() {
         // BIP173 example P2WPKH.
