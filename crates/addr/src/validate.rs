@@ -8,14 +8,42 @@
 //! bech32/bech32m polymod), so a random string doesn't get mislabelled; the remaining schemes
 //! (Ergo Blake2b, Monero block-base58, Alephium unchecked) fall back to structural shape.
 
-use crate::codec::{base58, bech32, cryptonote};
+use crate::codec::{base58, bech32, cashaddr, cryptonote};
 use crate::coins::{Family, FamilyParams, COINS};
+
+/// Longest address string detection will look at, in bytes.
+///
+/// This is a deliberate guard on untrusted input, not a validity rule. Most of what
+/// [`detect_family`] does below is linear, but steps 4, 5 and 7 reach [`base58::decode`], which is
+/// quadratic in the input length — one bignum multiply-accumulate per character over an
+/// accumulator that grows with the input. The strings arriving here are payout addresses out of a
+/// miner's configuration, so their length is chosen by whoever wrote that file, and an unbounded
+/// quadratic on input somebody else chooses is a denial-of-service shape.
+///
+/// 128 is the smallest round number comfortably clear of everything detection can legitimately
+/// classify. The longest is a 95-character CryptoNote address
+/// (`varint(prefix) ‖ spend(32) ‖ view(32) ‖ checksum(4)` through the block-base58 scheme — see
+/// [`cryptonote_tag`]); a `karlsentest:` version-1 Kaspa address is 75, a bech32m Taproot address
+/// 62, a base58check P2PKH address 35. The margin leaves room for a longer prefix a future coin row
+/// might bring without anyone having to revisit this number, and still bounds the worst case to a
+/// few thousand limb operations.
+///
+/// Measured in bytes rather than characters: a multi-byte string only trips the cap sooner, and
+/// nothing detection models is non-ASCII, so it would have been classified `None` regardless.
+const MAX_ADDR_LEN: usize = 128;
+
+/// Detection's cap must sit at or below the one [`base58::decode`] enforces, so that base58's cap
+/// can never be what silently stops classifying a string detection was still willing to look at.
+/// Checked at compile time — the two constants live in different modules for different reasons, and
+/// this is the relationship between them.
+const _: () = assert!(MAX_ADDR_LEN <= base58::MAX_INPUT_LEN);
 
 /// Best-effort classification of `addr` into an address [`Family`]. `None` when nothing we model
 /// matches — the caller treats that as "can't tell", not "invalid".
 pub fn detect_family(addr: &str) -> Option<Family> {
     let a = addr.trim();
-    if a.is_empty() {
+    // Nothing to classify, and — see [`MAX_ADDR_LEN`] — nothing worth spending quadratic time on.
+    if a.is_empty() || a.len() > MAX_ADDR_LEN {
         return None;
     }
 
@@ -26,13 +54,16 @@ pub fn detect_family(addr: &str) -> Option<Family> {
         }
     }
 
-    // 2. Kaspa-family CashAddr: `<prefix>:<payload>` where the prefix is a modelled Kaspa prefix
-    //    and the payload uses the bech32 charset. The `prefix:` shape is unambiguous.
-    if let Some((prefix, payload)) = a.split_once(':') {
-        if !payload.is_empty()
-            && payload.bytes().all(is_bech32_char)
-            && kaspa_prefixes().any(|p| p == prefix)
-        {
+    // 2. Kaspa-family CashAddr: `<prefix>:<payload>` where the CashAddr checksum verifies and the
+    //    prefix is a modelled Kaspa prefix. The `prefix:` shape is unambiguous, but shape alone is
+    //    not enough to answer confidently: this arm used to test only that the prefix matched and
+    //    the payload used the bech32 charset, which meant a Kaspa address with one mistyped
+    //    character was reported as a valid Kaspa address — from the very check whose job is to
+    //    notice that. Every other arm below verifies a checksum before committing; this one now
+    //    does too. The prefix is folded into the checksum, so this also separates the forks, which
+    //    are otherwise byte-for-byte identical.
+    if let Some(decoded) = cashaddr::decode(a) {
+        if kaspa_prefixes().any(|p| p == decoded.prefix) {
             return Some(Family::KaspaAddr);
         }
     }
@@ -47,11 +78,30 @@ pub fn detect_family(addr: &str) -> Option<Family> {
         }
     }
 
-    // 4. Bitcoin-style base58check (P2PKH): decode + verify the double-SHA256 checksum, then match
-    //    the leading version byte against a modelled coin. A valid checksum rules out lookalikes.
+    // 4. Base58check: decode + verify the double-SHA256 checksum, which rules out lookalikes. Two
+    //    modelled families share this decode, and the *payload length* is what separates them —
+    //    both wrap the same 20-byte hash160, and only one puts a version byte in front of it:
+    //      P2PKH — `version(1 or 2) ‖ hash160(20)` → payload is 21 or 22 bytes.
+    //      XDAG  — bare `hash160(20)`, no version  → payload is exactly 20 bytes.
+    //    Discriminating on the leading bytes alone cannot tell them apart, and used to get it
+    //    actively wrong 5% of the time; see [`version_is_modelled`].
     if let Some(payload) = base58::decode_check(a) {
         if version_is_modelled(&payload) {
             return Some(Family::P2pkh);
+        }
+        // XDAG's modern account address is `Base58Check(HASH160(compressed_pubkey))` with **no**
+        // version byte — its one deviation from P2PKH. Source: XDagger/xdagj (MIT)
+        // `crypto/keys/AddressUtils.toBytesAddress` + `crypto/encoding/Base58.encodeCheck`; the
+        // derivation side is `forager-wallet`'s `families/xdag.rs`.
+        //
+        // A 20-byte checksum-valid payload is unambiguous against everything else modelled here.
+        // P2PKH is 21 or 22 by the rule above. A WIF is `wif ‖ key(32)[‖ 0x01]`, 33 or 34
+        // (`forager-wallet` `secret.rs`). Alephium is plain base58 with no checksum at all, and
+        // Ergo's checksum is Blake2b, not double-SHA256, so neither reaches this arm except by a
+        // 2^-32 accident — and if one did, its payload would be 29 and 34 bytes respectively.
+        // CryptoNote uses the block-base58 scheme, a different encoding entirely.
+        if payload.len() == HASH160_LEN {
+            return Some(Family::Xdag);
         }
     }
 
@@ -197,19 +247,30 @@ fn hrp_is_modelled(hrp: &str) -> bool {
     })
 }
 
-/// Whether a decoded base58check payload starts with a version prefix the coin table models.
+/// Width of the RIPEMD160(SHA256(pubkey)) digest every base58check family here is built around.
+/// P2PKH puts a version prefix in front of it; XDAG does not.
+const HASH160_LEN: usize = 20;
+
+/// Whether a decoded base58check payload is `version ‖ hash160` for a version prefix the coin table
+/// models.
 ///
 /// Matches on the *prefix*, not just the first byte, so a Zcash-family two-byte prefix
 /// (`0x1C,0xB8`) is distinguished from a hypothetical one-byte `0x1C` coin.
+///
+/// The length test is not belt-and-braces — it is the whole discriminator's other half. This was
+/// once a bare `payload.starts_with(v)` with no constraint on how long the payload was, which meant
+/// *any* checksum-valid base58check payload opening with one of the 13 distinct one-byte version
+/// prefixes the table models (`0x00 0x1e 0x26 0x30 0x32 0x3c 0x41 0x47 0x4a 0x52 0x6d 0x6f 0x71`)
+/// was answered `P2pkh`. An XDAG address is a bare 20-byte hash160, whose leading byte is
+/// effectively uniform, so 13/256 ≈ 5.1% of correct XDAG addresses were confidently mislabelled —
+/// a `Mismatch` warning fired at a user who had configured their payout correctly, which is exactly
+/// the failure this module exists to prevent. A P2PKH payload is `version ‖ hash160` and nothing
+/// else, so pinning the length to `version.len() + 20` costs nothing and closes it.
 fn version_is_modelled(payload: &[u8]) -> bool {
     COINS
         .iter()
         .flat_map(|c| c.params.p2pkh_version_prefixes())
-        .any(|v| payload.starts_with(v))
-}
-
-fn is_bech32_char(b: u8) -> bool {
-    b"qpzry9x8gf2tvdw0s3jn54khce6mua7l".contains(&b.to_ascii_lowercase())
+        .any(|v| payload.len() == v.len() + HASH160_LEN && payload.starts_with(v))
 }
 
 fn is_base58_char(b: u8) -> bool {
@@ -342,12 +403,97 @@ mod tests {
         );
     }
 
+    /// The Kaspa-family address for privkey=1 — the x-only key
+    /// `79be667e…16f81798` under version 0 (`PubKey`). Reproducible from this crate alone:
+    /// `codec::cashaddr::encode("kaspa", 0, &x_only)`, which the sibling `forager-wallet` crate
+    /// asserts its `kas` derivation against (`kas_address_matches_manual_xonly_plus_cashaddr`).
+    ///
+    /// The previous vector here was a hand-made string that only *looked* like a Kaspa address —
+    /// 62 data characters, which no version can produce (version 0 gives 61, version 1 gives 63),
+    /// and a checksum that does not verify. It passed because detection tested shape alone. That
+    /// it survived review is the defect in miniature, so the vector is now a real address.
+    const KASPA_PRIVKEY1: &str =
+        "kaspa:qpumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtes4ypce9sf";
+
     #[test]
     fn detects_kaspa() {
+        assert_eq!(detect_family(KASPA_PRIVKEY1), Some(Family::KaspaAddr));
+        // The upstream all-zero KAT from `codec/cashaddr.rs`, for a second, independently sourced
+        // string.
         assert_eq!(
-            detect_family("kaspa:qyp9sfrku0d9gd5xw7cntd7hc3d0myk3edts8u8vj0vfl2h9jjr4uggcnyv2rd"),
+            detect_family("kaspa:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkx9awp4e"),
             Some(Family::KaspaAddr)
         );
+    }
+
+    /// The Kaspa arm of `corrupted_checksum_is_not_a_confident_family` below, and the point of the
+    /// whole exercise: a Kaspa-family address with a typo used to be classified confidently,
+    /// because the arm checked the `prefix:` shape and nothing else. A `Verdict::Ok` on a corrupted
+    /// address defeats the only check standing between a user and mining to an unspendable string.
+    #[test]
+    fn corrupted_kaspa_family_address_is_not_a_confident_family() {
+        for prefix in ["kaspa", "karlsen", "spectre"] {
+            let good = crate::codec::cashaddr::encode(prefix, 0, &[0x11u8; 32]);
+            assert_eq!(detect_family(&good), Some(Family::KaspaAddr), "{good}");
+
+            // Flip one payload character. Everything else — prefix, charset, length — still looks
+            // exactly like a valid address.
+            let mut bytes = good.clone().into_bytes();
+            let i = prefix.len() + 1;
+            bytes[i] = if bytes[i] == b'q' { b'p' } else { b'q' };
+            let bad = String::from_utf8(bytes).unwrap();
+            assert_ne!(detect_family(&bad), Some(Family::KaspaAddr), "{bad}");
+
+            // And a truncated paste.
+            let bad = &good[..good.len() - 1];
+            assert_ne!(detect_family(bad), Some(Family::KaspaAddr), "{bad}");
+        }
+    }
+
+    /// A Karlsen address must not be classified under the `kaspa:` prefix. The three forks share the
+    /// address format byte for byte, so only the checksum's prefix folding separates them.
+    #[test]
+    fn a_kaspa_family_payload_under_a_sibling_forks_prefix_is_not_confident() {
+        let karlsen = crate::codec::cashaddr::encode("karlsen", 0, &[0x11u8; 32]);
+        let data = karlsen.split_once(':').unwrap().1;
+        assert_ne!(
+            detect_family(&format!("kaspa:{data}")),
+            Some(Family::KaspaAddr)
+        );
+    }
+
+    /// A pathologically long string must be rejected promptly, not decoded.
+    ///
+    /// The bound is deliberately loose — this is a guard against the quadratic path coming back,
+    /// not a benchmark. Without the cap the same input runs `base58::decode`'s bignum
+    /// multiply-accumulate 100_000 times over a number that grows to ~73 KB, which takes minutes in
+    /// a debug build; with it the call is a length comparison.
+    #[test]
+    fn pathologically_long_input_is_rejected_promptly() {
+        // `z`, not `1`: a run of `1`s is base58's leading-zero case, which short-circuits to a
+        // zero accumulator and never does the expensive multiply. A high-value character makes the
+        // accumulator grow, which is the case the cap exists for.
+        let long = "z".repeat(100_000);
+        let start = std::time::Instant::now();
+        assert_eq!(detect_family(&long), None);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "detection took {:?} — the length cap is not doing its job",
+            start.elapsed()
+        );
+    }
+
+    /// The cap must not be so tight that it clips a real address. The longest thing detection
+    /// classifies is a 95-character CryptoNote address.
+    #[test]
+    fn the_cap_clears_the_longest_address_detection_models() {
+        let xmr = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
+        assert!(xmr.len() < MAX_ADDR_LEN);
+        assert_eq!(detect_family(xmr), Some(Family::CryptoNote));
+        // The longest Kaspa-family shape a modelled row can produce: the longest prefix, `:`, and a
+        // version-1 (33-byte) payload.
+        let longest_kaspa = crate::codec::cashaddr::encode("karlsentest", 1, &[0u8; 33]);
+        assert!(longest_kaspa.len() < MAX_ADDR_LEN, "{longest_kaspa}");
     }
 
     #[test]
@@ -356,6 +502,124 @@ mod tests {
             detect_family("9f4QF8AD1nQ3nJahQVkMj8hFSVVzVom77b52JU7EW71Zexg6N8v"),
             Some(Family::Ergo)
         );
+    }
+
+    /// XDAG's known-answer address, lifted from the generator's own KAT (`forager-wallet`
+    /// `families/xdag.rs`, derived from xdagj's `SampleKeys.java` keypair). The round-trip against
+    /// what the generator actually emits lives in `forager-wallet`'s `tests/validate_roundtrip.rs`,
+    /// which can call the generator; this crate cannot.
+    const XDAG_SAMPLE_KEYS: &str = "N3RC53vbaDNrziTdWmctBEeQ4fo38moXu";
+
+    #[test]
+    fn detects_xdag() {
+        assert_eq!(detect_family(XDAG_SAMPLE_KEYS), Some(Family::Xdag));
+        assert_eq!(check(XDAG_SAMPLE_KEYS, Family::Xdag), Verdict::Ok);
+    }
+
+    /// XDAG and P2PKH are different chains, so a paste of one where the other is expected is a
+    /// real, actionable warning — not something [`families_compatible`] should wave through the way
+    /// it does the three Bitcoin-script families.
+    #[test]
+    fn xdag_and_p2pkh_are_not_compatible() {
+        assert!(matches!(
+            check(XDAG_SAMPLE_KEYS, Family::P2pkh),
+            Verdict::Mismatch {
+                detected: Family::Xdag,
+                expected: Family::P2pkh
+            }
+        ));
+        assert!(matches!(
+            check("1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH", Family::Xdag),
+            Verdict::Mismatch {
+                detected: Family::P2pkh,
+                expected: Family::Xdag
+            }
+        ));
+    }
+
+    /// The regression the XDAG arm was written for, pinned deliberately so it cannot be lost again.
+    ///
+    /// [`version_is_modelled`] used to ask only whether the decoded payload *started with* a
+    /// modelled version prefix, with no constraint on its length. An XDAG payload is a bare 20-byte
+    /// hash160 with no version byte, and a hash160's leading byte is effectively uniform, so a
+    /// perfectly good XDAG address matched whenever that byte was one of the 13 distinct one-byte
+    /// prefixes the table models — 13/256 ≈ 5.1%, measured at 5.06% over 20_000 pseudorandom
+    /// hash160s. Those addresses were reported as `P2pkh`: a *confident wrong answer* telling a
+    /// user that their correctly configured payout address was a misconfiguration, which is the
+    /// exact failure the pre-flight check exists to prevent.
+    ///
+    /// The prefixes come straight out of the coin table rather than a hand-written list, so a row
+    /// added later is covered without anyone remembering to extend this test. Copying the whole
+    /// prefix in — not just its first byte — also exercises the two-byte Zcash-family `0x1C,0xB8`
+    /// case, the only shape for which the length rule has to distinguish 22 bytes from 20.
+    #[test]
+    fn an_xdag_hash160_that_opens_with_a_p2pkh_version_prefix_is_still_xdag() {
+        let prefixes: Vec<&[u8]> = COINS
+            .iter()
+            .flat_map(|c| c.params.p2pkh_version_prefixes())
+            .collect();
+        // The two cheapest collisions to reason about, asserted present so the loop below is known
+        // to be exercising the case this test is named for.
+        assert!(prefixes.contains(&&[0x00u8][..]), "{prefixes:?}");
+        assert!(prefixes.contains(&&[0x1eu8][..]), "{prefixes:?}");
+
+        for v in prefixes {
+            let mut hash160 = [0x11u8; 20];
+            hash160[..v.len()].copy_from_slice(v);
+            let addr = crate::codec::base58::encode_check(&hash160);
+            assert_eq!(detect_family(&addr), Some(Family::Xdag), "{v:02x?}: {addr}");
+            assert_eq!(check(&addr, Family::Xdag), Verdict::Ok, "{v:02x?}: {addr}");
+        }
+    }
+
+    /// A checksum-valid base58check payload of exactly 20 bytes belongs to XDAG and to nothing else
+    /// this crate models — no other arm may claim one. Swept over every leading byte, so the answer
+    /// does not depend on which value the hash160 happens to start with (the thing that used to
+    /// decide it).
+    #[test]
+    fn a_twenty_byte_base58check_payload_is_claimed_only_by_xdag() {
+        for b in 0..=u8::MAX {
+            let mut hash160 = [0x5au8; 20];
+            hash160[0] = b;
+            // A second byte that varies too, so the sweep is not 256 near-identical strings.
+            hash160[1] = b.wrapping_mul(31).wrapping_add(7);
+            let addr = crate::codec::base58::encode_check(&hash160);
+            assert_eq!(detect_family(&addr), Some(Family::Xdag), "{b:#04x}: {addr}");
+        }
+    }
+
+    /// Detection is checksum-verified for XDAG the same way it is for every other base58check
+    /// family: a typo'd or truncated paste must not come back as a confident `Xdag`.
+    #[test]
+    fn corrupted_xdag_address_is_not_a_confident_family() {
+        let mut bytes = XDAG_SAMPLE_KEYS.as_bytes().to_vec();
+        let i = bytes.len() - 1;
+        bytes[i] = if bytes[i] == b'u' { b'v' } else { b'u' };
+        let bad = String::from_utf8(bytes).unwrap();
+        assert_ne!(detect_family(&bad), Some(Family::Xdag), "{bad}");
+
+        let truncated = &XDAG_SAMPLE_KEYS[..XDAG_SAMPLE_KEYS.len() - 1];
+        assert_ne!(detect_family(truncated), Some(Family::Xdag), "{truncated}");
+    }
+
+    /// The tightened length rule must not have cost the P2PKH arm anything: both payload widths a
+    /// modelled row can produce still classify. 21 bytes is the one-byte-version case (the
+    /// derivation KAT's own BTC vector); 22 is the Zcash-family two-byte `0x1C,0xB8` prefix, minted
+    /// here over the privkey=1 hash160 that `codec/base58.rs`'s own KAT pins.
+    #[test]
+    fn both_p2pkh_payload_widths_still_detect() {
+        assert_eq!(
+            detect_family("1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH"),
+            Some(Family::P2pkh)
+        );
+
+        let hash160: [u8; 20] =
+            crate::hexbytes::decode_n("751e76e8199196d454941c45d1b3a323f1433bd6").unwrap();
+        let mut payload = vec![0x1cu8, 0xb8];
+        payload.extend_from_slice(&hash160);
+        let t_addr = crate::codec::base58::encode_check(&payload);
+        assert!(t_addr.starts_with("t1"), "{t_addr}");
+        assert_eq!(detect_family(&t_addr), Some(Family::P2pkh), "{t_addr}");
     }
 
     #[test]

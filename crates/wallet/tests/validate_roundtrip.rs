@@ -6,7 +6,7 @@
 //! test that calls the generator cannot travel with it. See
 //! `the repository README`.
 
-use forager_wallet::{detect_family, Family, Network};
+use forager_wallet::{check, detect_family, Family, Network, Verdict};
 
 /// A CryptoNote fork with a multi-byte network prefix is detected as CryptoNote — the case a
 /// first-character `4`/`8` test could not see.  The addresses are minted from the coin rows
@@ -21,6 +21,50 @@ fn detects_multibyte_prefix_cryptonote_forks() {
             detect_family(&w.address),
             Some(Family::CryptoNote),
             "{ticker}: {}",
+            w.address
+        );
+    }
+}
+
+/// Every XDAG address the generator emits is detected as `Family::Xdag`.
+///
+/// XDAG is `Base58Check(HASH160(compressed_pubkey))` with **no** version byte, so its payload is a
+/// bare 20-byte hash160 while a P2PKH payload is `version ‖ hash160`, 21 or 22 bytes. Detection
+/// used to discriminate on the leading bytes alone and ignore the length, which produced both
+/// halves of one bug: no XDAG arm existed at all, and ~5% of XDAG addresses — those whose hash160
+/// happened to open with one of the 13 one-byte version prefixes the coin table models, 13/256 —
+/// were answered `P2pkh` instead, warning a user off a correctly configured payout address.
+///
+/// The sweep is what makes this the generator-side counterpart to `validate.rs`'s synthetic
+/// regression test: 64 keys over an effectively uniform leading byte will, at 13/256 each, contain
+/// several of the collisions on average, and every one of them is minted by the real derivation
+/// path rather than hand-assembled, so this cannot drift from what the generator emits.
+#[test]
+fn every_generated_xdag_address_round_trips_through_detection() {
+    // The xdagj `SampleKeys.java` KAT key — the same vector `families/xdag.rs` pins the address
+    // string against, so a change to either side shows up here.
+    let w = forager_wallet::address_from_secret(
+        "xdag",
+        "a392604efc2fad9c0b3da43b5f698a2e3f270f170d859912be0d54742275c5f6",
+        Network::Mainnet,
+    )
+    .unwrap();
+    assert_eq!(w.address, "N3RC53vbaDNrziTdWmctBEeQ4fo38moXu");
+    assert_eq!(detect_family(&w.address), Some(Family::Xdag));
+
+    for i in 1u32..=64 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("xdag", &secret, Network::Mainnet).unwrap();
+        assert_eq!(
+            detect_family(&w.address),
+            Some(Family::Xdag),
+            "key {secret}: {}",
+            w.address
+        );
+        assert_eq!(
+            check(&w.address, Family::Xdag),
+            Verdict::Ok,
+            "{}",
             w.address
         );
     }
