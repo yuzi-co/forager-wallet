@@ -42,9 +42,9 @@ fn polymod(values: impl Iterator<Item = u8>) -> u64 {
 /// `checksum(prefix ‖ 0 ‖ payload_5bit ‖ 0×8)`, prefix expanded by masking each byte to 5 bits
 /// (unlike bech32's `hrp_expand`, which splits each byte into high-3/low-5 halves).
 fn checksum(payload_5bit: &[u8], prefix: &str) -> u64 {
-    let fivebit_prefix = prefix.bytes().map(|c| c & 0x1f);
+    let prefix_5bit = prefix.bytes().map(|c| c & 0x1f);
     polymod(
-        fivebit_prefix
+        prefix_5bit
             .chain([0u8])
             .chain(payload_5bit.iter().copied())
             .chain([0u8; 8]),
@@ -60,17 +60,17 @@ pub fn encode(prefix: &str, version: u8, payload: &[u8]) -> String {
     let mut full = Vec::with_capacity(1 + payload.len());
     full.push(version);
     full.extend_from_slice(payload);
-    let fivebit_payload = convertbits_8_to_5(&full);
+    let payload_5bit = convertbits_8_to_5(&full);
 
-    let chk = checksum(&fivebit_payload, prefix);
+    let chk = checksum(&payload_5bit, prefix);
     // Checksum is 40 bits (8 five-bit groups): the low 5 bytes of the 8-byte big-endian repr.
     let chk_5bit = convertbits_8_to_5(&chk.to_be_bytes()[3..]);
     debug_assert_eq!(chk_5bit.len(), CHECKSUM_CHARS);
 
-    let mut s = String::with_capacity(prefix.len() + 1 + fivebit_payload.len() + chk_5bit.len());
+    let mut s = String::with_capacity(prefix.len() + 1 + payload_5bit.len() + chk_5bit.len());
     s.push_str(prefix);
     s.push(':');
-    for &d in fivebit_payload.iter().chain(chk_5bit.iter()) {
+    for &d in payload_5bit.iter().chain(chk_5bit.iter()) {
         s.push(CHARSET[d as usize] as char);
     }
     s

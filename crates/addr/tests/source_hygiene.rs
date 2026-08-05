@@ -330,26 +330,33 @@ const TAINTED: &[(&str, &str)] = &[
         "rusty-kaspa `crypto/addresses/src/bech32.rs` local",
     ),
     //
-    // **Two entries that belong here and are not here, stated rather than dropped.**
+    // These next two were found by this guard's own author while writing it, and the source was
+    // repaired rather than the list trimmed to fit.
     //
     // rusty-kaspa's `Address::encode_payload` names its locals `fivebit_payload` and
-    // `fivebit_prefix`. `src/codec/cashaddr.rs` names its own locals `fivebit_payload` and
-    // `fivebit_prefix` — in the same two functions, for the same two values. Every other five-bit
-    // quantity in that file takes the suffix form the file otherwise uses throughout
-    // (`payload_5bit`, `data_5bit`, `chk_5bit`); these two, and only these two, take upstream's
-    // prefix form. That is not convergence on an obvious name the way `polymod` or `has_lower` is.
-    // Upstream had a free choice between `fivebit_`, `five_bit_` and `_5bit`, this file made the
-    // opposite choice everywhere else, and it agrees with upstream exactly where upstream has a
-    // variable to agree with.
+    // `fivebit_prefix` (`crypto/addresses/src/bech32.rs:101-102`). `src/codec/cashaddr.rs` named
+    // its own locals `fivebit_payload` and `fivebit_prefix` — in the same two functions, for the
+    // same two values, masking with the same `& 0x1f`. Every other five-bit quantity in that file
+    // takes the suffix form it otherwise uses throughout (`payload_5bit`, `data_5bit`,
+    // `chk_5bit`); those two, and only those two, took upstream's prefix form. `checksum` declared
+    // `fivebit_prefix` in a body whose own parameter was already `payload_5bit`, so the file
+    // disagreed with itself inside a single function. Upstream, for its part, uses `_5bit` nowhere
+    // at all. That is not convergence on an obvious name the way `polymod` or `has_lower` is:
+    // upstream had a free choice between `fivebit_`, `five_bit_` and `_5bit`, this file made the
+    // opposite choice everywhere else, and it agreed with upstream at exactly the two points where
+    // upstream has a variable to agree with.
     //
-    // They are not entries because adding them would fail this test on the current tree, and the
-    // repair belongs in `src/codec/cashaddr.rs` — rename the two locals to the `_5bit` form the
-    // rest of the file uses — not in this list. Weakening or omitting the finding to keep the guard
-    // green is the failure mode this whole file exists to prevent, so it is written down instead.
-    // When those two locals are renamed, add:
-    //
-    //     ("fivebit_payload", "rusty-kaspa `crypto/addresses/src/bech32.rs` local"),
-    //     ("fivebit_prefix",  "rusty-kaspa `crypto/addresses/src/bech32.rs` local"),
+    // Both locals have been renamed to the file's own convention, which is what makes the two
+    // entries below true rather than red. Renaming the source was the fix; omitting the entries to
+    // keep this file green would have been the failure mode it exists to prevent.
+    (
+        "fivebit_payload",
+        "rusty-kaspa `crypto/addresses/src/bech32.rs` local",
+    ),
+    (
+        "fivebit_prefix",
+        "rusty-kaspa `crypto/addresses/src/bech32.rs` local",
+    ),
     //
     // Three further rusty-kaspa names — `encode_payload`, `decode_payload`, `CHARSET_REV` — occur
     // in this crate only inside doc comments that attribute them to upstream, which is the honest
