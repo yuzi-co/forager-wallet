@@ -1,5 +1,25 @@
 const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+/// Longest string [`decode`] will look at, in characters.
+///
+/// Base58's alphabet is not a power of two, so decoding is a bignum multiply-accumulate per
+/// character over an accumulator that grows with the input — quadratic in the input length. Every
+/// caller in this crate feeds `decode` an address string, and addresses come from configuration
+/// files and pool operators, which is to say from outside. An unbounded quadratic on untrusted
+/// input is a denial-of-service shape whether or not anyone has aimed it at us yet.
+///
+/// The cap lives here, and not only in [`crate::validate::detect_family`], because `decode` is
+/// `pub`: it is reachable without going through detection, and a guard that depends on every
+/// caller remembering to bound its input is not a guard. `detect_family` keeps its own copy
+/// because its cap also bounds the work that never reaches base58 at all — the CryptoNote prefix
+/// loop, the bech32 polymod — so neither cap subsumes the other.
+///
+/// 128 is chosen the same way `detect_family`'s is: comfortably above the 95-character CryptoNote
+/// address, which is the longest base58 string any scheme this crate models produces (a WIF is 52,
+/// a P2PKH address 35), with room to spare, while holding the worst case to a few thousand limb
+/// operations.
+pub const MAX_INPUT_LEN: usize = 128;
+
 pub fn encode(input: &[u8]) -> String {
     use num_bigint::BigUint;
     use num_traits::Zero;
@@ -34,12 +54,17 @@ pub fn encode_check(payload: &[u8]) -> String {
     encode(&v)
 }
 
-/// Decode a base58 string to bytes (no checksum). `None` on any non-alphabet character. Leading
-/// `1`s decode to leading `0x00` bytes, matching [`encode`]. Used by address *detection*, the
-/// inverse of derivation.
+/// Decode a base58 string to bytes (no checksum). `None` on any non-alphabet character, or on an
+/// input longer than [`MAX_INPUT_LEN`]. Leading `1`s decode to leading `0x00` bytes, matching
+/// [`encode`]. Used by address *detection*, the inverse of derivation.
 pub fn decode(s: &str) -> Option<Vec<u8>> {
     use num_bigint::BigUint;
     use num_traits::Zero;
+    // Bound the quadratic before entering it — see [`MAX_INPUT_LEN`]. Reported as "not base58",
+    // which is what an over-long string is as far as every scheme this crate models is concerned.
+    if s.len() > MAX_INPUT_LEN {
+        return None;
+    }
     let mut num = BigUint::zero();
     let base = BigUint::from(58u32);
     for c in s.bytes() {
@@ -58,12 +83,22 @@ pub fn decode(s: &str) -> Option<Vec<u8>> {
 /// (`version ‖ data`) without the checksum, or `None` if the string is invalid, too short, or the
 /// checksum does not match — i.e. `Some` proves a well-formed Bitcoin-style address.
 pub fn decode_check(s: &str) -> Option<Vec<u8>> {
-    let raw = decode(s)?;
+    Some(verify_check(&decode(s)?)?.to_vec())
+}
+
+/// The base58check half of [`decode_check`], over bytes that are already decoded: verify the
+/// trailing 4-byte double-SHA256 checksum and return the payload without it.
+///
+/// Split out so a caller that needs both the checked payload and the raw bytes pays for one decode
+/// instead of two. [`crate::validate::detect_family`] is that caller: base58check families and the
+/// unchecked base58 families (Alephium, Ergo) sit in adjacent arms, and it used to run the full
+/// quadratic bignum decode of the same string once for each.
+pub fn verify_check(raw: &[u8]) -> Option<&[u8]> {
     if raw.len() < 5 {
         return None;
     }
     let (payload, checksum) = raw.split_at(raw.len() - 4);
-    (crate::hash::double_sha256(payload)[..4] == *checksum).then(|| payload.to_vec())
+    (crate::hash::double_sha256(payload)[..4] == *checksum).then_some(payload)
 }
 
 #[cfg(test)]
@@ -86,7 +121,9 @@ mod tests {
         assert_eq!(encode_check(&payload), "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH");
     }
 
-    /// The four checksum bytes are SHA256d of the payload, pinned against the primitive by name.
+    /// The four checksum bytes are SHA256d of the payload, pinned against the primitive by name at
+    /// both ends: the encoder writes it, and [`verify_check`] — the one place anything checks it —
+    /// accepts what the encoder wrote.
     ///
     /// Nothing in the coin table selects this hash, so nothing else would fail if it changed. A
     /// chain that uses a different one (Groestlcoin, Decred) is unsupported by construction, and
@@ -94,12 +131,13 @@ mod tests {
     /// that text is what this test exists to stop.
     #[test]
     fn base58check_checksum_is_the_first_four_bytes_of_double_sha256() {
-        use super::decode;
+        use super::{decode, verify_check};
         let payload = b"forager".as_slice();
         let raw = decode(&encode_check(payload)).expect("encode_check emits base58");
         let (got_payload, checksum) = raw.split_at(raw.len() - 4);
         assert_eq!(got_payload, payload);
         assert_eq!(checksum, &crate::hash::double_sha256(payload)[..4]);
+        assert_eq!(verify_check(&raw), Some(payload));
     }
 
     #[test]

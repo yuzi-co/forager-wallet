@@ -20,6 +20,13 @@ categories = ["cryptography::cryptocurrencies"]
 [dependencies]
 # base58check checksums.
 sha2 = { workspace = true }
+# Blake2b-256, for the Ergo P2PK address checksum. A second hash for a second checksum scheme —
+# exactly parallel to `sha2` above, and no more of a curve, entropy source or wordlist than it is,
+# so the no-keygen claim this crate's dependency list carries is untouched. It costs the closed
+# miner nothing either: the miner already links `blake2b_simd` for Equihash's consensus-critical
+# Blake2b, so this adds no crate to the shipped binary. Detection cannot verify an Ergo address
+# without it, and an arm that cannot verify a checksum answers confidently from shape alone.
+blake2b_simd = "1"
 # Base58 is not a power-of-two alphabet, so decoding needs bignum arithmetic. Pure arithmetic
 # crates: no entropy source, no curve, no network. Keeping them here does not weaken the claim
 # above, which is about key generation, not about integers.

@@ -66,7 +66,13 @@ SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
 
 ## HD purposes
 
-`--hd` derives from a 24-word BIP39 mnemonic at `m/<purpose>'/<slip44>'/<account>'/0/<index>`.
+`--hd` derives from a BIP39 mnemonic at `m/<purpose>'/<slip44>'/<account>'/0/<index>`.
+
+A **freshly generated** phrase is always 24 words (256 bits of entropy — the strongest length BIP39
+defines). A phrase you **supply** for restore may be any length BIP39 defines: 12, 15, 18, 21 or 24
+words. Generate strong, accept anything the spec allows. A BIP39 `--passphrase` may be any Unicode
+string; it is NFKD-normalized as the spec requires, so a non-ASCII passphrase derives the same
+address here as in any other standard wallet.
 
 | `--purpose` | Aliases | Path | Address | Applies to |
 |---|---|---|---|---|
@@ -103,10 +109,18 @@ forager-wallet restore 0000…0001 --coin btc
 # From the WIF this tool prints — the same string, read back
 forager-wallet restore KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn --coin btc
 
-# From a BIP39 mnemonic, at the standard path
-forager-wallet restore --mnemonic "<24 words>" --coin btc
-forager-wallet restore --mnemonic "<24 words>" --coin btc --purpose taproot
-forager-wallet restore --mnemonic "<24 words>" --all --account 1 --index 5
+# From a BIP39 mnemonic, at the standard path (12, 15, 18, 21 or 24 words)
+forager-wallet restore --mnemonic "<your mnemonic>" --coin btc
+forager-wallet restore --mnemonic "<your mnemonic>" --coin btc --purpose taproot
+forager-wallet restore --mnemonic "<your mnemonic>" --all --account 1 --index 5
+```
+
+A rejected mnemonic says what is actually wrong with it — which word, at which position, or which
+illegal word count — rather than a blanket verdict on the whole phrase:
+
+```
+$ forager-wallet restore --mnemonic "abandon abandon abandon abandon abandon abandom abandon abandon abandon abandon abandon about" --coin btc
+error: invalid BIP39 mnemonic: word 6 ("abandom") is not in the BIP-39 English word list (words are lowercase, and only these 2048 are valid)
 ```
 
 All three accept `--testnet` and `--legacy` where the coin supports them, and work with a custom

@@ -37,6 +37,15 @@ getrandom = "0.2"
 # the pure-Rust `k256` secp256k1 backend — no C toolchain, cross-compiles under the Zig path.
 # Used ONLY for HD derivation; the single-key generator stays on the crate's own clean-room curve.
 bip32 = { version = "0.5", features = ["mnemonic", "bip39", "std"] }
+# PBKDF2-HMAC-SHA512 for BIP-39 phrase→seed (`bip39` module). RustCrypto, pure Rust, and already
+# in the tree transitively via `bip32` at this exact version with this exact feature selection —
+# declaring it directly adds no new crate, it just stops the dependency being implicit.
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+# NFKD normalization for BIP-39 phrase/passphrase, which the spec mandates on both. Pure Rust,
+# data-table only: no curve, no entropy source, no network. This is the one genuinely new crate —
+# hand-rolling Unicode normalization would be far worse than depending on the maintained
+# implementation of a table-driven standard.
+unicode-normalization = "0.1"
 # Zero private-key/seed byte buffers on drop.
 zeroize = "1"
 

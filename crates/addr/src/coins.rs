@@ -6,6 +6,9 @@
 //! encoding another — a mislabel that reaches the pool-payout warning in
 //! `forager::wallet_preflight` — so the discriminant has exactly one source.
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
 /// High-level address family — one variant per address construction algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
@@ -58,7 +61,9 @@ pub enum FamilyParams {
     ///     `dcrutil/hash160.go` over `chaincfg/chainhash/hashfuncs.go`'s `HashB`), and the
     ///     checksum is double-BLAKE-256 over a *two*-byte version (`decred/base58`
     ///     `base58check.go`, `CheckEncode(input []byte, version [2]byte)`; mainnet
-    ///     `PubKeyHashAddrID` is `0x07,0x3f` → `Ds…`).
+    ///     `PubKeyHashAddrID` is `0x07,0x3f` → `Ds…`).  Decred is out of reach twice over: this
+    ///     `version` field is a slice and could hold two bytes, but [`parse_token`]'s `ver=` reads
+    ///     a single byte, so no token can even name it.
     ///
     /// Neither is in [`COINS`], and neither can be added by a table row: each needs a hash
     /// primitive this workspace does not implement, and the table's own rule is that no row lands
@@ -735,8 +740,8 @@ pub fn token_caveat(token: &str) -> Option<&'static str> {
 /// **UNVERIFIED — the caller MUST warn.** Every [`COINS`] row is gated by a known-answer test; a
 /// token's bytes are user-supplied and unchecked, so a wrong version byte yields a
 /// valid-*looking* address that silently misdirects the payout.  The encoder is trusted; the
-/// parameters are not.  The leaked `ticker`/`name` strings live for the process lifetime — keygen
-/// is a one-shot CLI action, never a hot path.
+/// parameters are not.  The `ticker`/`name`/prefix strings are interned (see [`intern`]) and live
+/// for the process lifetime, so calling this repeatedly with the same token allocates once.
 ///
 /// A token is also narrower than a family: it can only say what the grammar has a slot for.  The
 /// `p2pkh:` token supplies version and WIF bytes but no hash primitives, and the encoder's
@@ -786,23 +791,23 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
 
     let params = match family {
         "p2pkh" => FamilyParams::P2pkh {
-            version: leak_bytes(vec![parse_byte(req("ver")?)?]),
+            version: intern_bytes(vec![parse_byte(req("ver")?)?]),
             version_testnet: None,
             wif: parse_byte(req("wif")?)?,
             compressed: !flags.contains(&"uncompressed"),
         },
         "segwit" => FamilyParams::SegwitV0 {
-            hrp: leak(req("hrp")?.to_string()),
+            hrp: intern(req("hrp")?.to_string()),
             hrp_testnet: None,
             wif: parse_byte(req("wif")?)?,
-            p2pkh_version: leak_bytes(vec![match get("ver") {
+            p2pkh_version: intern_bytes(vec![match get("ver") {
                 Some(v) => parse_byte(v)?,
                 None => 0x00,
             }]),
             p2pkh_version_testnet: None,
         },
         "taproot" => FamilyParams::Taproot {
-            hrp: leak(req("hrp")?.to_string()),
+            hrp: intern(req("hrp")?.to_string()),
             hrp_testnet: None,
         },
         "cryptonote" => FamilyParams::CryptoNote {
@@ -813,7 +818,7 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
             },
         },
         "kaspa" => FamilyParams::KaspaAddr {
-            prefix: leak(req("prefix")?.to_string()),
+            prefix: intern(req("prefix")?.to_string()),
             prefix_testnet: None,
         },
         // The zero-parameter families: nothing to read out of the token.
@@ -833,8 +838,8 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
     };
 
     Ok(CoinSpec {
-        ticker: leak(token.to_string()),
-        name: leak(format!("custom {family}")),
+        ticker: intern(token.to_string()),
+        name: intern(format!("custom {family}")),
         params,
         // A runtime token names no chain, so no SLIP-44 coin type is knowable: HD is never offered
         // for one. `--hd` takes a table ticker.
@@ -842,25 +847,80 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
     })
 }
 
-/// Leak an owned string to `'static`.  Bounded: only runtime coin tokens reach this, in the
-/// one-shot `wallet` CLI path — never a loop or hot path.
-fn leak(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
+/// Intern an owned string as `'static`, reusing the allocation if this exact value has been
+/// interned before.
+///
+/// [`CoinSpec`] holds `&'static str` because every row in [`COINS`] is a compile-time literal;
+/// [`parse_token`] mints a row at runtime and so has to produce `'static` data from an owned
+/// `String`. It did that with a bare `Box::leak` per call, justified by a comment reading "only
+/// runtime coin tokens reach this, in the one-shot `wallet` CLI path — never a loop or hot path".
+/// That was true of the CLI and false of the crate: `forager-addr` is published, and `parse_token`
+/// is `pub`. A caller that re-reads its configuration — the miner reloading a pool token — leaked
+/// three allocations per parse, forever, growing with uptime rather than with the number of coins
+/// it had ever seen. A library cannot rely on a property of one of its callers.
+///
+/// Interning restores the bound the comment claimed: memory is proportional to the number of
+/// *distinct* values interned, not to the number of calls, so re-parsing the same token in a loop
+/// allocates once and then never again. Deliberate leaking remains, and remains the right shape —
+/// an interned value is genuinely immortal, and there is no free to get wrong.
+///
+/// This is not a defence against an attacker feeding unbounded distinct tokens; nothing that hands
+/// arbitrary strings to a coin-table parser is in a position to be defended from here. It closes
+/// the case that arises without an adversary, which is the one that was actually reachable.
+fn intern(s: String) -> &'static str {
+    static POOL: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let pool = POOL.get_or_init(Mutex::default);
+    // A panic inside the critical section cannot leave the set inconsistent — the only operations
+    // are a lookup and an insert of an already-leaked reference — so a poisoned lock is recoverable
+    // rather than a reason to abort a payout-address parse.
+    let mut pool = pool.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = pool.get(s.as_str()) {
+        return hit;
+    }
+    let leaked: &'static str = Box::leak(s.into_boxed_str());
+    pool.insert(leaked);
+    leaked
 }
 
-/// Leak an owned byte vector to `'static`, for a runtime token's version prefix.  Same bound as
-/// [`leak`]: at most one allocation per `wallet` invocation.
-fn leak_bytes(v: Vec<u8>) -> &'static [u8] {
-    Box::leak(v.into_boxed_slice())
+/// Intern an owned byte vector as `'static`, for a runtime token's version prefix. Same reasoning
+/// and same bound as [`intern`].
+fn intern_bytes(v: Vec<u8>) -> &'static [u8] {
+    static POOL: OnceLock<Mutex<HashSet<&'static [u8]>>> = OnceLock::new();
+    let pool = POOL.get_or_init(Mutex::default);
+    let mut pool = pool.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = pool.get(v.as_slice()) {
+        return hit;
+    }
+    let leaked: &'static [u8] = Box::leak(v.into_boxed_slice());
+    pool.insert(leaked);
+    leaked
 }
 
 /// Parse a `u64` in decimal, or hex when `0x`/`0X`-prefixed.
+///
+/// Digits only: no sign. Both `str::parse::<u64>` and [`u64::from_str_radix`] accept a leading `+`,
+/// so `p2pkh:ver=0x+00` and `cryptonote:net=+18` parsed cleanly before this guard. That matters
+/// more here than it would in a general-purpose parser, because this whole path is the
+/// **unverified** escape hatch: a token's bytes are never checked against a known-answer test, so
+/// the grammar is the only thing standing between a typo and a valid-looking address that
+/// misdirects a payout. A parser that accepts input the documented grammar does not describe —
+/// `<int>`, not `[+-]<int>` — narrows that gap for no one's benefit; a version byte has no sign.
 fn parse_uint(s: &str) -> Result<u64, String> {
-    let parsed = match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        Some(hex) => u64::from_str_radix(hex, 16),
-        None => s.parse::<u64>(),
+    let (digits, radix) = match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(hex) => (hex, 16),
+        None => (s, 10),
     };
-    parsed.map_err(|_| format!("invalid integer '{s}' (use decimal, or 0x-prefixed hex)"))
+    let malformed = || format!("invalid integer '{s}' (use decimal, or 0x-prefixed hex)");
+    let digits_only = !digits.is_empty()
+        && digits.bytes().all(|b| match radix {
+            16 => b.is_ascii_hexdigit(),
+            _ => b.is_ascii_digit(),
+        });
+    if !digits_only {
+        return Err(malformed());
+    }
+    // Overflow is still `from_str_radix`'s to catch: the guard above is about shape, not range.
+    u64::from_str_radix(digits, radix).map_err(|_| malformed())
 }
 
 /// Parse a single byte (0..=255) in decimal or `0x` hex.
@@ -1042,6 +1102,89 @@ mod tests {
         // The spellings the grammar does define still parse.
         assert!(parse_token("p2pkh:ver=0x00,wif=0x80,uncompressed").is_ok());
         assert!(parse_token("cryptonote:net=18,net_test=53").is_ok());
+    }
+
+    /// An integer parameter is digits, with no sign.
+    ///
+    /// Both `str::parse::<u64>` and `u64::from_str_radix` accept a leading `+`, so the first block
+    /// below all parsed before the guard in [`parse_uint`]: `p2pkh:ver=0x+00` yielded version byte
+    /// `0x00` and `cryptonote:net=+18` yielded Monero's prefix, from tokens the documented grammar
+    /// (`<int>`, `<byte>`) does not describe. This is the *unverified* escape hatch — a token's
+    /// bytes never meet a known-answer test — so the grammar is the only check they get, and
+    /// accepting input it does not describe widens the one gap that matters.
+    ///
+    /// The second block was already rejected, by `from_str_radix` erroring on a negative into an
+    /// unsigned type and on an empty string. Those are properties of the callee, not decisions this
+    /// parser was making, so they are pinned here rather than left to be re-derived.
+    #[test]
+    fn an_integer_parameter_does_not_take_a_sign() {
+        for token in [
+            "p2pkh:ver=0x+00,wif=0x80",
+            "p2pkh:ver=+0,wif=0x80",
+            "p2pkh:ver=0x00,wif=+128",
+            "cryptonote:net=+18",
+            "cryptonote:net=18,net_test=+53",
+        ] {
+            assert!(parse_token(token).is_err(), "{token} must be rejected");
+        }
+        for token in [
+            "p2pkh:ver=-1,wif=0x80",
+            "p2pkh:ver=0x,wif=0x80",
+            "p2pkh:ver=,wif=0x80",
+        ] {
+            assert!(parse_token(token).is_err(), "{token} must be rejected");
+        }
+
+        // The spellings the grammar does describe are untouched, in both radices.
+        assert!(parse_token("p2pkh:ver=0x00,wif=0x80").is_ok());
+        assert!(parse_token("p2pkh:ver=0,wif=128").is_ok());
+        assert!(parse_token("p2pkh:ver=0X1E,wif=0x9E").is_ok());
+        assert_eq!(parse_uint("0x1e"), Ok(30));
+        assert_eq!(parse_uint("30"), Ok(30));
+        // Range is still checked, and separately from shape.
+        assert!(parse_byte("256").is_err());
+        assert!(parse_uint("0xfffffffffffffffff").is_err());
+    }
+
+    /// Re-parsing a token allocates once, not once per call.
+    ///
+    /// [`parse_token`] has to produce `'static` data from runtime strings, and used to do it with a
+    /// bare `Box::leak` on every success — three allocations per call, never reused. The comment
+    /// defending that said the path was "never a loop or hot path", which described the `wallet`
+    /// CLI rather than the crate: `forager-addr` is published and `parse_token` is `pub`, so a
+    /// caller re-reading its configuration grew with its uptime instead of with the number of
+    /// distinct coins it had seen.
+    ///
+    /// Pointer equality is the assertion because it is the property that matters — that the second
+    /// parse returned the *same* allocation, not merely an equal string. Comparing the strings
+    /// would pass under the old code too.
+    #[test]
+    fn parsing_the_same_token_twice_reuses_one_allocation() {
+        const TOKEN: &str = "p2pkh:ver=0x1e,wif=0x9e";
+        let a = parse_token(TOKEN).unwrap();
+        let b = parse_token(TOKEN).unwrap();
+
+        assert!(std::ptr::eq(a.ticker, b.ticker), "ticker re-leaked");
+        assert!(std::ptr::eq(a.name, b.name), "name re-leaked");
+        let (va, _) = a.params.p2pkh_parts().unwrap();
+        let (vb, _) = b.params.p2pkh_parts().unwrap();
+        assert!(std::ptr::eq(va, vb), "version prefix re-leaked");
+
+        // Equal values interned through different call sites and different owned `String`s still
+        // land on one allocation: `name` here is `format!("custom p2pkh")` built afresh each time.
+        assert_eq!(a.name, "custom p2pkh");
+
+        // A genuinely different token is a different allocation — interning must not be collapsing
+        // distinct values onto one another.
+        let c = parse_token("p2pkh:ver=0x00,wif=0x80").unwrap();
+        assert!(!std::ptr::eq(a.ticker, c.ticker));
+        assert!(
+            std::ptr::eq(a.name, c.name),
+            "same family, same name string"
+        );
+        let (vc, _) = c.params.p2pkh_parts().unwrap();
+        assert!(!std::ptr::eq(va, vc));
+        assert_eq!(vc, &[0x00u8][..]);
     }
 
     /// The unknown-family message names every family the grammar carries, so it stays correct as the

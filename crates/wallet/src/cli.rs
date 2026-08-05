@@ -11,20 +11,22 @@
 //!   WIF this tool prints, so the secret it hands out is one it also reads back.  Prints no
 //!   secret you did not supply.  `inspect` / `address` are older names for the same thing.
 //!
-//! * `forager-wallet restore --mnemonic "<24 words>" (--coin <ticker> | --all) [--purpose P]`
-//!   Re-derive from a BIP39 mnemonic at the standard path (the HD form of the above).
+//! * `forager-wallet restore --mnemonic "<12/15/18/21/24 words>" (--coin <ticker> | --all) [--purpose P]`
+//!   Re-derive from a BIP39 mnemonic at the standard path (the HD form of the above).  Every
+//!   length BIP39 defines is accepted — 12 words is the most common one in circulation.
 //!
 //! * `forager-wallet list`
 //!   Print a table of all coins supported by the wallet crate.
 //!
 //! * `forager-wallet new --hd (--coin <ticker> | --all) [--purpose <bip44|bip84|bip86>]
-//!     [--account N] [--index N] [--passphrase <str>] [--mnemonic "<24 words>"]`
+//!     [--account N] [--index N] [--passphrase <str>] [--mnemonic "<12/15/18/21/24 words>"]`
 //!   HD (BIP39) mode: derive at the standard path `m/<purpose>'/<slip44>'/<account>'/0/<index>`.
 //!   Without `--purpose`, each coin uses the purpose whose address type matches what the
 //!   single-key path produces for it (BIP84 for SegWit coins, BIP86 for Taproot, BIP44 for P2PKH
-//!   and Ethereum-family).  Prints the 24-word mnemonic once (stderr, with a security warning),
-//!   then `symbol  address  secret  path` per coin (stdout).  Additive to — not a replacement
-//!   for — the single-key `forager-wallet new` above.
+//!   and Ethereum-family).  A freshly minted phrase is always **24 words** (256-bit entropy) and
+//!   is printed once (stderr, with a security warning); a `--mnemonic` supplied for restore may
+//!   be any length BIP39 defines.  Then `symbol  address  secret  path` per coin (stdout).
+//!   Additive to — not a replacement for — the single-key `forager-wallet new` above.
 
 use crate::coins::Family;
 use crate::{Network, SecretStd};
@@ -114,7 +116,7 @@ pub fn run(args: &[String]) -> Result<(), CliError> {
         Some("restore") if args.iter().any(|a| a == "--mnemonic") => cmd_new_hd(args),
         Some("restore") | Some("inspect") | Some("address") => {
             const USAGE: &str = "usage: forager-wallet restore <secret-hex-or-wif> --coin <ticker> [--testnet] [--legacy]\n   \
-                                 or: forager-wallet restore --mnemonic \"<24 words>\" (--coin <ticker> | --all) [--purpose P] [--account N] [--index N]";
+                                 or: forager-wallet restore --mnemonic \"<12/15/18/21/24 words>\" (--coin <ticker> | --all) [--purpose P] [--account N] [--index N]";
             let coin = coin.ok_or_else(|| err(USAGE))?;
             let key = positional_after(args, 2).ok_or_else(|| err(USAGE))?;
             cmd_inspect(&coin, key, net, legacy)
@@ -233,7 +235,7 @@ fn cmd_new_hd(args: &[String]) -> Result<(), CliError> {
 
     let usage =
         "usage: forager-wallet new --hd (--coin <ticker> | --all) [--purpose <bip44|bip84|bip86>] \
-                 [--account N] [--index N] [--passphrase <str>] [--mnemonic \"<24 words>\"]";
+                 [--account N] [--index N] [--passphrase <str>] [--mnemonic \"<12/15/18/21/24 words>\"]";
 
     // Which address type to derive. Absent, each coin uses its native purpose — the one whose
     // address type matches what the single-key generator produces for that coin.
@@ -276,11 +278,15 @@ fn cmd_new_hd(args: &[String]) -> Result<(), CliError> {
         vec![coin]
     };
 
-    // Mnemonic: restore the supplied one (validated) or mint a fresh 24-word phrase from OS entropy.
+    // Mnemonic: restore the supplied one (validated) or mint a fresh 24-word phrase from OS
+    // entropy. A supplied phrase may be 12, 15, 18, 21 or 24 words; a minted one is always 24.
     // `Zeroizing` wipes the phrase from memory on drop.
     let supplied = parse_value(args, "--mnemonic");
     let mnemonic: Zeroizing<String> = match supplied {
         Some(phrase) => {
+            // `HdError`'s message carries the specific BIP39 failure — which word, at which
+            // position, or which illegal word count — so pass it through verbatim rather than
+            // substituting a generic "invalid mnemonic" of our own.
             crate::hd::validate_mnemonic(phrase).map_err(|e| err(e.to_string()))?;
             Zeroizing::new(phrase.trim().to_string())
         }
@@ -605,5 +611,38 @@ mod tests {
             "totally not valid",
         ]);
         assert!(run(&args).is_err());
+    }
+
+    /// The 12-word regression, at the CLI boundary: `restore --mnemonic` with the BIP84/BIP86
+    /// spec mnemonic must succeed. Before the clean-room BIP39 landed, this exact invocation
+    /// failed with "invalid BIP39 mnemonic (check the words, length, and checksum)" — a false
+    /// accusation against the single most common phrase length in circulation.
+    #[test]
+    fn restore_accepts_a_twelve_word_mnemonic() {
+        const TWELVE: &str = "abandon abandon abandon abandon abandon abandon \
+                              abandon abandon abandon abandon abandon about";
+        let args = argv(&["restore", "--mnemonic", TWELVE, "--coin", "btc"]);
+        run(&args).expect("a valid 12-word phrase must restore");
+    }
+
+    /// A rejected phrase must say what is wrong with *it*, not emit a generic verdict. These are
+    /// the two mistakes a user actually makes: a wrong number of words, and one mistyped word.
+    #[test]
+    fn rejected_mnemonic_message_names_the_specific_problem() {
+        // 13 words — not a length BIP39 defines. The message must say so, and quote the count.
+        let thirteen = vec!["abandon"; 13].join(" ");
+        let args = argv(&["restore", "--mnemonic", &thirteen, "--coin", "btc"]);
+        let msg = run(&args).unwrap_err().0;
+        assert!(msg.contains("13"), "must report the actual count: {msg}");
+        assert!(msg.contains("12"), "must list the legal counts: {msg}");
+
+        // One word out of twelve mistyped. The message must name that word and its position, so
+        // the user knows where to look on the card in front of them.
+        let typo = "abandon abandon abandon abandon abandon abandom \
+                    abandon abandon abandon abandon abandon about";
+        let args = argv(&["restore", "--mnemonic", typo, "--coin", "btc"]);
+        let msg = run(&args).unwrap_err().0;
+        assert!(msg.contains("abandom"), "must name the word: {msg}");
+        assert!(msg.contains('6'), "must give the position: {msg}");
     }
 }

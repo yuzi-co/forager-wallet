@@ -1,7 +1,7 @@
 //! **BIP39 hierarchical-deterministic (HD) address keygen (BIP44 / BIP84 / BIP86).**
 //!
 //! Opt-in companion to the single-key generator in [`crate`].  Where [`crate::generate`] mints one
-//! standalone random key, this module derives keys from a 24-word BIP39 mnemonic at a *standard*
+//! standalone random key, this module derives keys from a BIP39 mnemonic at a *standard*
 //! path
 //!
 //! ```text
@@ -37,16 +37,32 @@
 //! even when its family would work: inventing a coin type would produce a path no other wallet
 //! reproduces, which defeats the point of deriving from a standard mnemonic.
 //!
+//! ## Phrase lengths: generate strong, accept anything the spec allows
+//! [`generate_mnemonic`] always mints **24 words** (256 bits of entropy) — the strongest length
+//! BIP39 defines, and the one this tool has always handed out.  [`validate_mnemonic`] and
+//! [`derive`], however, accept **all five** legal lengths (12/15/18/21/24).  The asymmetry is
+//! deliberate: what we *mint* should be as strong as the spec permits, but what we *accept* is not
+//! ours to narrow — a 12-word phrase is by far the most common length in circulation, it is
+//! perfectly valid, and refusing it in a tool whose headline feature is restore tells the user
+//! their own backup is wrong.
+//!
 //! ## Provenance
-//! Mnemonic↔seed (BIP39) and BIP32/BIP44 child derivation are delegated to the audited `bip32`
-//! crate (pure-Rust `k256` backend).  Address/WIF *encoding* reuses this crate's own clean-room
-//! primitives — the very same [`crate::families::p2pkh`] encoder the single-key path uses, plus
-//! [`crate::secret::wif`].  Every coin row is locked by a known-answer test in `tests/hd_kat.rs`
-//! against an independent oracle anchored to the canonical BIP39/BIP32 published vectors.
+//! Mnemonic↔seed (BIP39) is this crate's own clean-room [`crate::bip39`], written from the
+//! specification text and locked to the official `trezor/python-mnemonic` vectors; the `bip32`
+//! crate (pure-Rust `k256` backend) remains the BIP32/BIP44 CKDpriv implementation, entered
+//! through the public `bip32::Seed::new` seam.  That split is the whole reason [`crate::bip39`]
+//! exists: `bip32`'s BIP39 module rejects every phrase shorter than 24 words and skips the
+//! mandatory NFKD normalization of the passphrase — see that module's header for both defects,
+//! quoted from `bip32-0.5.3/src/mnemonic/phrase.rs`.  Address/WIF *encoding* reuses this crate's
+//! own clean-room primitives — the very same [`crate::families::p2pkh`] encoder the single-key
+//! path uses, plus [`crate::secret::wif`].  Every coin row is locked by a known-answer test in
+//! `tests/hd_kat.rs` against an independent oracle anchored to the canonical BIP39/BIP32 published
+//! vectors, and the BIP84/BIP86 rows there are the vectors published in the BIP texts themselves.
 
-use bip32::{DerivationPath, Mnemonic, PrivateKey, XPrv};
+use bip32::{DerivationPath, PrivateKey, XPrv};
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::bip39::{self, Bip39Error};
 use crate::coins::{CoinSpec, FamilyParams, COINS};
 use crate::curves::secp256k1;
 use crate::{families, secret, SecretStd};
@@ -208,8 +224,17 @@ impl core::fmt::Debug for HdAccount {
 pub enum HdError {
     /// The requested ticker is not an HD-capable coin (run [`supported`]).
     UnknownCoin(String),
-    /// The supplied mnemonic failed BIP39 validation (bad word / length / checksum).
-    InvalidMnemonic,
+    /// The supplied mnemonic failed BIP39 validation.
+    ///
+    /// The underlying [`Bip39Error`] is carried through **deliberately**. This variant used to be
+    /// a unit, and every failure — a mistyped word, an illegal word count, a checksum mismatch —
+    /// collapsed into the single message "invalid BIP39 mnemonic (check the words, length, and
+    /// checksum)". That flattening was not merely unhelpful: combined with the delegated BIP39
+    /// implementation rejecting all 12-word phrases, it told users holding a perfectly valid
+    /// backup that their words were wrong. Telling them *which* word, at *which* position — or
+    /// that 13 words is not a length BIP39 defines — is the point of the fix, so the specific
+    /// error must not die at this boundary.
+    InvalidMnemonic(Bip39Error),
     /// The OS entropy source failed.
     Entropy,
     /// BIP32 derivation failed (astronomically unlikely — an invalid child scalar).
@@ -227,9 +252,11 @@ impl core::fmt::Display for HdError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             HdError::UnknownCoin(t) => write!(f, "coin '{t}' does not support HD (BIP44) keygen"),
-            HdError::InvalidMnemonic => {
-                f.write_str("invalid BIP39 mnemonic (check the words, length, and checksum)")
-            }
+            // The inner error already says exactly what is wrong; this prefix only names the
+            // subject. Do not add a generic "check the words, length, and checksum" hint here —
+            // that hint is what this change removed, because it fired even when the phrase was
+            // fine and the implementation was not.
+            HdError::InvalidMnemonic(e) => write!(f, "invalid BIP39 mnemonic: {e}"),
             HdError::Entropy => f.write_str("failed to read OS entropy"),
             HdError::Derivation => f.write_str("BIP32 key derivation failed"),
             HdError::UnsupportedPurpose { coin, purpose } => {
@@ -239,34 +266,56 @@ impl core::fmt::Display for HdError {
     }
 }
 
-impl std::error::Error for HdError {}
+impl std::error::Error for HdError {
+    /// Expose the BIP39 cause, so a caller that wants to branch on *why* a phrase was rejected
+    /// (rather than reformat the message) can reach it through the standard `source` chain.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            HdError::InvalidMnemonic(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 /// Generate a fresh **24-word (256-bit)** BIP39 English mnemonic from the OS CSPRNG.
+///
+/// 24 words deliberately, even though [`validate_mnemonic`] and [`derive`] accept all five legal
+/// lengths: 256 bits is the strongest entropy BIP39 defines, it is what this tool has always
+/// minted, and there is no reason to hand out a weaker phrase than the standard permits. See the
+/// module header — generate strong, accept anything the spec allows.
 ///
 /// The returned phrase zeroizes on drop; the caller must display it exactly once and never persist
 /// it — anyone with it controls every address derived from it.
 pub fn generate_mnemonic() -> Result<Zeroizing<String>, HdError> {
     let mut entropy = [0u8; 32];
     getrandom::getrandom(&mut entropy).map_err(|_| HdError::Entropy)?;
-    // 256 bits of entropy -> 24 words. `Default::default()` selects English (the only BIP39
-    // language `bip32` ships and the only one standardized).
-    let mnemonic = Mnemonic::from_entropy(entropy, Default::default());
+    // 256 bits of entropy -> 24 words. 32 is one of `bip39::ENTROPY_LENGTHS`, so the encode cannot
+    // actually fail; it is still propagated rather than unwrapped, because a panic in a keygen
+    // path is never the right failure mode.
+    let phrase = bip39::entropy_to_phrase(&entropy).map_err(HdError::InvalidMnemonic);
     entropy.zeroize();
-    Ok(Zeroizing::new(mnemonic.phrase().to_string()))
+    phrase
 }
 
-/// Validate a BIP39 mnemonic phrase (word list + checksum). `Ok(())` if importable.
+/// Validate a BIP39 mnemonic phrase (word list, length, checksum). `Ok(())` if importable.
+///
+/// Accepts every length BIP39 defines — 12, 15, 18, 21 or 24 words. On failure the specific
+/// [`Bip39Error`] is carried out, so the caller can tell the user which word is wrong rather than
+/// blaming the whole phrase.
 pub fn validate_mnemonic(phrase: &str) -> Result<(), HdError> {
-    Mnemonic::new(phrase.trim(), Default::default())
-        .map(|_| ())
-        .map_err(|_| HdError::InvalidMnemonic)
+    bip39::validate(phrase).map_err(HdError::InvalidMnemonic)
 }
 
-/// Derive the payout address + WIF for `coin` at the standard BIP44 path
-/// `m/44'/<slip44>'/<account>'/0/<index>` from `phrase` (+ optional BIP39 `passphrase`).
+/// Derive the payout address + WIF for `coin` at the standard path
+/// `m/<purpose>'/<slip44>'/<account>'/0/<index>` from `phrase` (+ optional BIP39 `passphrase`).
+///
+/// `phrase` may be any length BIP39 defines (12/15/18/21/24 words), and `passphrase` may be any
+/// Unicode string — it is NFKD-normalized per BIP39 §"From mnemonic to seed" before it reaches
+/// PBKDF2, so a non-ASCII passphrase derives the same address here as in any spec-compliant
+/// wallet.
 ///
 /// The private key is materialised only transiently and its byte buffer is zeroized before return;
-/// the returned [`HdAccount::wif`] is the sole secret the caller receives.
+/// the returned [`HdAccount::secret`] is the sole secret the caller receives.
 pub fn derive(
     phrase: &str,
     passphrase: &str,
@@ -287,13 +336,18 @@ pub fn derive(
         });
     }
 
-    let mnemonic =
-        Mnemonic::new(phrase.trim(), Default::default()).map_err(|_| HdError::InvalidMnemonic)?;
-    // `Seed` zeroizes its 64 bytes on drop.
-    let seed = mnemonic.to_seed(passphrase);
+    // `bip39::seed` validates the phrase first, so a typo surfaces as a specific error instead of
+    // as a well-formed seed for a wallet the user does not own. Its `Seed` zeroizes on drop.
+    let seed = bip39::seed(phrase, passphrase).map_err(HdError::InvalidMnemonic)?;
     let path_str = format!("m/{}'/{slip44}'/{account}'/0/{index}", purpose.number());
     let path: DerivationPath = path_str.parse().map_err(|_| HdError::Derivation)?;
-    let xprv = XPrv::derive_from_path(&seed, &path).map_err(|_| HdError::Derivation)?;
+    // The seam into `bip32`: only the BIP39 half moved to this crate; CKDpriv is still `bip32`'s.
+    // `bip32::Seed` also zeroizes its 64 bytes on drop, so both ends of the handoff are covered —
+    // what is not is the unnamed `[u8; 64]` temporary the copy passes through, which Rust moves
+    // into `Seed::new` and never gives us a handle on. It is transient stack, identical in kind to
+    // what the previous `mnemonic.to_seed()` call produced, so this is not a regression.
+    let xprv = XPrv::derive_from_path(bip32::Seed::new(*seed.as_bytes()), &path)
+        .map_err(|_| HdError::Derivation)?;
 
     // 32-byte child private scalar. Fully-qualified to pick the bip32 trait method (`[u8; 32]`),
     // not k256's inherent `to_bytes` (a GenericArray).
@@ -422,6 +476,7 @@ mod tests {
         ));
     }
 
+    /// Generation stays at the strongest length the spec defines, even though acceptance widened.
     #[test]
     fn generate_mnemonic_is_24_words_and_valid() {
         let m = generate_mnemonic().unwrap();
@@ -445,12 +500,35 @@ mod tests {
         assert_eq!(a.path, "m/44'/0'/0'/0/0");
     }
 
+    /// A rejection names what is actually wrong. Here the phrase is five words, so the count is
+    /// the first thing that fails — and the caller is told the count, not a blanket "invalid".
     #[test]
     fn invalid_mnemonic_rejected() {
         assert_eq!(
             validate_mnemonic("not a real mnemonic phrase"),
-            Err(HdError::InvalidMnemonic)
+            Err(HdError::InvalidMnemonic(Bip39Error::WordCount { found: 5 }))
         );
+        let msg = validate_mnemonic("not a real mnemonic phrase")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains('5'), "{msg}");
+    }
+
+    /// The five legal lengths all validate, and 12 words in particular derives — the phrase length
+    /// the delegated implementation rejected outright.
+    #[test]
+    fn every_legal_length_validates_and_twelve_words_derives() {
+        for (i, &len) in bip39::ENTROPY_LENGTHS.iter().enumerate() {
+            let phrase = bip39::entropy_to_phrase(&vec![0x11; len]).unwrap();
+            assert_eq!(phrase.split_whitespace().count(), bip39::WORD_COUNTS[i]);
+            validate_mnemonic(&phrase)
+                .unwrap_or_else(|e| panic!("{} words: {e}", bip39::WORD_COUNTS[i]));
+        }
+        let twelve = "abandon abandon abandon abandon abandon abandon \
+                      abandon abandon abandon abandon abandon about";
+        validate_mnemonic(twelve).expect("a valid 12-word phrase must validate");
+        derive(twelve, "", lookup("btc").unwrap(), Purpose::Bip84, 0, 0)
+            .expect("a valid 12-word phrase must derive");
     }
 
     #[test]

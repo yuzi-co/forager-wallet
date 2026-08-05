@@ -18,15 +18,39 @@ pub fn encode(bytes: &[u8]) -> String {
 }
 
 /// Decode an even-length hex string. `None` on an odd length or a non-hex character.
+///
+/// Decoding is done a nibble at a time rather than by handing each two-character window to
+/// [`u8::from_str_radix`], because `from_str_radix` is a *number* parser, not a hex-digit parser:
+/// it accepts a leading sign. `decode("+f")` therefore used to return `Some([0x0f])`, silently
+/// treating a two-character window that contains only one hex digit as a byte. (`-f` was already
+/// rejected, but only because the target type is unsigned — a coincidence of `u8`, not a rule
+/// about hex.) Every caller here wants "exactly two hex digits" — a private key, a version prefix,
+/// a test vector — and none of them wants a sign, so the sign was pure surface with no legitimate
+/// input behind it.
+///
+/// Working over bytes rather than `str` slices also removes the char-boundary question: a
+/// multi-byte UTF-8 sequence has every byte ≥ 0x80, none of which is a hex digit, so it is rejected
+/// for the same reason `zz` is instead of needing a separate guard.
 pub fn decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+    let bytes = s.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
-    // `str::get` returns `None` on a non-char boundary, so multi-byte UTF-8 input is rejected
-    // rather than sliced mid-character.
-    (0..s.len() / 2)
-        .map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok())
+    bytes
+        .chunks_exact(2)
+        .map(|pair| Some(nibble(pair[0])? << 4 | nibble(pair[1])?))
         .collect()
+}
+
+/// The numeric value of one hex digit, either case. `None` for anything else — including `+`, `-`,
+/// whitespace and any non-ASCII byte.
+fn nibble(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Decode exactly `N` bytes (`2 * N` hex characters). `None` on any other length or on non-hex
@@ -66,8 +90,29 @@ mod tests {
     fn decode_rejects_odd_length_and_non_hex() {
         assert_eq!(decode("abc"), None);
         assert_eq!(decode("zz"), None);
-        // Multi-byte UTF-8: byte length is even, but the slice is not a char boundary.
+        // Multi-byte UTF-8: byte length is even, and every byte is ≥ 0x80, so no nibble matches.
         assert_eq!(decode("é"), None);
+    }
+
+    /// A sign is not a hex digit. The `+` cases decoded before: the previous implementation handed
+    /// each two-character window to `u8::from_str_radix`, which parses a *number* and so accepts a
+    /// leading `+`, turning a window holding one hex digit into a byte. No caller wants a signed
+    /// nibble — each is decoding a key, a version prefix or a test vector — so quietly reading
+    /// `+f` as `0f` is a wrong answer rather than a lenient one.
+    ///
+    /// The `-` cases were already rejected, but only because the target type is unsigned. That is a
+    /// property of `u8`, not a rule about hex, and it would not have survived a change of type;
+    /// they are pinned here so both signs are now refused for the same stated reason.
+    #[test]
+    fn decode_rejects_a_signed_nibble() {
+        assert_eq!(decode("+f"), None);
+        assert_eq!(decode("-f"), None);
+        assert_eq!(decode("f+"), None);
+        // Not just at the start: a sign anywhere in a longer string is still not a byte.
+        assert_eq!(decode("00+f00"), None);
+        // Whitespace, the other thing an integer parser is happy to skip.
+        assert_eq!(decode(" f"), None);
+        assert_eq!(decode("0 "), None);
     }
 
     #[test]
