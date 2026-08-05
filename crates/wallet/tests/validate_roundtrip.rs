@@ -26,6 +26,55 @@ fn detects_multibyte_prefix_cryptonote_forks() {
     }
 }
 
+/// Every Ergo address the generator emits is detected as `Family::Ergo`, on both networks.
+///
+/// Detection used to answer this family from shape alone — a leading `9`, a 40..=60 length window
+/// and the base58 charset — which had two consequences. A corrupted mainnet address was still
+/// answered `Ergo`, and a *correct testnet* address was answered nothing at all, because testnet's
+/// prefix byte is 0x11 and renders `3…`. The arm now decodes and verifies the Blake2b-256 checksum,
+/// so both halves are closed by the same change; this is the generator-side counterpart, minting
+/// its inputs through the real derivation path rather than hand-assembling them.
+#[test]
+fn every_generated_ergo_address_round_trips_through_detection() {
+    for network in [Network::Mainnet, Network::Testnet] {
+        for i in 1u32..=32 {
+            let secret = format!("{i:064x}");
+            let w = forager_wallet::address_from_secret("erg", &secret, network).unwrap();
+            assert_eq!(
+                detect_family(&w.address),
+                Some(Family::Ergo),
+                "{network:?} key {secret}: {}",
+                w.address
+            );
+            assert_eq!(
+                check(&w.address, Family::Ergo),
+                Verdict::Ok,
+                "{}",
+                w.address
+            );
+
+            // One flipped character in the middle: same length, same leading character, same
+            // charset. Only the checksum separates it from the address above.
+            let mut bytes = w.address.clone().into_bytes();
+            let i = bytes.len() / 2;
+            bytes[i] = if bytes[i] == b'A' { b'B' } else { b'A' };
+            let bad = String::from_utf8(bytes).unwrap();
+            assert_ne!(detect_family(&bad), Some(Family::Ergo), "{bad}");
+        }
+    }
+
+    // The two networks really do render differently, so the loop above is not silently testing
+    // mainnet twice.
+    let main = forager_wallet::address_from_secret("erg", &format!("{:064x}", 1), Network::Mainnet)
+        .unwrap()
+        .address;
+    let test = forager_wallet::address_from_secret("erg", &format!("{:064x}", 1), Network::Testnet)
+        .unwrap()
+        .address;
+    assert!(main.starts_with('9'), "{main}");
+    assert!(test.starts_with('3'), "{test}");
+}
+
 /// Every XDAG address the generator emits is detected as `Family::Xdag`.
 ///
 /// XDAG is `Base58Check(HASH160(compressed_pubkey))` with **no** version byte, so its payload is a

@@ -46,9 +46,10 @@ Two targets want a flag. Everything after `--` goes to libFuzzer:
 # a finding, which it is not.
 cargo +nightly fuzz run base58 -- -max_len=256
 
-# `parse_token` calls `Box::leak` on the ticker, the name and the version prefix of every token it
-# accepts. That is bounded and correct in the one-shot CLI it was written for, and unbounded in a
-# fuzzing loop — so turn the leak detector off and give the process a ceiling.
+# `parse_token` interns the ticker, the name and the version prefix of every token it accepts, so
+# memory grows with the number of *distinct* tokens rather than with the number of calls. A fuzzer
+# is precisely the caller that generates unbounded distinct tokens, so the growth is still
+# unbounded here — turn the leak detector off and give the process a ceiling.
 cargo +nightly fuzz run parse_token -- -detect_leaks=0 -rss_limit_mb=4096
 ```
 
@@ -132,11 +133,13 @@ crash on startup — each target pins invariants that were read back out of the 
   change what it returns, because it rejects mixed case first and lower-cases internally anyway. The
   converse is not asserted: lower-casing a *rejected* mixed-case string can legitimately turn it
   into a valid address.
-* **`hexbytes`** — an accepted string is exactly twice as long as its output, and `decode_n::<N>`,
-  being `decode` plus a width check, must agree with `decode` for every `N`. The round trip is
-  deliberately **not** asserted, and this is not caution: it is false. `decode` delegates to
-  `u8::from_str_radix(_, 16)`, which accepts a leading `+`, so `decode("+f")` is `Some([0x0f])` and
-  re-encoding gives `"0f"`.
+* **`hexbytes`** — an accepted string is exactly twice as long as its output; `decode_n::<N>`, being
+  `decode` plus a width check, must agree with `decode` for every `N`; and `encode(decode(s))` is
+  `s` lower-cased. That last one used to be listed here as deliberately **not** asserted, because it
+  was false: `decode` delegated to `u8::from_str_radix(_, 16)`, a number parser that accepts a
+  leading `+`, so `decode("+f")` was `Some([0x0f])` and re-encoding gave `"0f"`. `decode` now
+  refuses anything that is not a hex digit, so hex is canonical up to case and the round trip is a
+  real invariant rather than a known exception.
 * **`parse_token`** — an accepted token is carried through verbatim as the spec's ticker, never
   offers HD derivation (a runtime token names no chain, so no SLIP-44 type is knowable), and split
   on its first `:` yields a family the `TOKEN_GRAMMAR` table lists. That last one is what keeps the

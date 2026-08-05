@@ -19,12 +19,24 @@ fuzz_target!(|data: &[u8]| {
 
     if let Some(bytes) = &decoded {
         // `decode` rejects an odd byte length up front and then consumes exactly two bytes per
-        // output byte via `str::get`, which returns `None` rather than slicing a multi-byte
-        // character in half. So an accepted string is all-ASCII and exactly twice as long.
+        // output byte, accepting only ASCII hex digits. So an accepted string is all-ASCII and
+        // exactly twice as long.
         assert_eq!(
             bytes.len() * 2,
             s.len(),
             "decoded length does not match the input"
+        );
+
+        // The round trip, which this target used to leave unasserted because it was false.
+        // `decode` fed each two-character window to `u8::from_str_radix(_, 16)`, a *number* parser
+        // that accepts a leading sign, so `decode("+f")` was `Some([0x0f])` and re-encoding gave
+        // `"0f"`. It now decodes a nibble at a time and refuses anything that is not a hex digit,
+        // which makes hex canonical up to case: the only freedom an accepted string has left is
+        // which case its letters are in, and `encode` always emits lower.
+        assert_eq!(
+            hexbytes::encode(bytes),
+            s.to_ascii_lowercase(),
+            "hex round trip is not the identity up to case"
         );
     }
 
@@ -33,11 +45,6 @@ fuzz_target!(|data: &[u8]| {
     // two the crate actually uses: a 20-byte HASH160 and a 32-byte key.
     check_width::<20>(s, decoded.as_deref());
     check_width::<32>(s, decoded.as_deref());
-
-    // Deliberately NOT asserted: that `encode(decode(s)) == s.to_ascii_lowercase()`. It is false.
-    // `decode` delegates each pair to `u8::from_str_radix(_, 16)`, which accepts a leading `+`, so
-    // `decode("+f")` is `Some([0x0f])` and re-encoding yields `"0f"`. Asserting the round trip here
-    // would turn this target into a machine for rediscovering that one quirk.
 });
 
 fn check_width<const N: usize>(s: &str, decoded: Option<&[u8]>) {
