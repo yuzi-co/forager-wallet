@@ -39,6 +39,15 @@ pub fn encode(input: &[u8]) -> String {
     String::from_utf8(out).unwrap()
 }
 
+/// Base58**check**: `BASE58(payload ‖ SHA256d(payload)[..4])`.
+///
+/// The checksum hash is Bitcoin's and is not a parameter — every coin in [`crate::coins::COINS`]
+/// keeps it, and so does everything a `p2pkh:`/`segwit:` coin token can express. It is a real
+/// per-chain choice, though, not a property of base58check: Groestlcoin patched this very step to
+/// double-Groestl-512 (`Groestlcoin/groestlcoin` `src/base58.cpp` → `XCoin::HashForAddress`), and
+/// Decred's base58check is double-BLAKE-256 (`decred/base58` `base58check.go`). Addresses *and*
+/// WIFs for those chains are outside what this encoder can mint; see [`crate::coins::FamilyParams`]
+/// for the citations and the warning the CLI prints.
 pub fn encode_check(payload: &[u8]) -> String {
     let mut v = payload.to_vec();
     v.extend_from_slice(&crate::hash::double_sha256(payload)[..4]);
@@ -110,6 +119,25 @@ mod tests {
             crate::hexbytes::decode_n("751e76e8199196d454941c45d1b3a323f1433bd6").unwrap();
         payload.extend_from_slice(&hash160);
         assert_eq!(encode_check(&payload), "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH");
+    }
+
+    /// The four checksum bytes are SHA256d of the payload, pinned against the primitive by name at
+    /// both ends: the encoder writes it, and [`verify_check`] — the one place anything checks it —
+    /// accepts what the encoder wrote.
+    ///
+    /// Nothing in the coin table selects this hash, so nothing else would fail if it changed. A
+    /// chain that uses a different one (Groestlcoin, Decred) is unsupported by construction, and
+    /// the `p2pkh:` coin token's caveat says so — swapping the primitive here without updating
+    /// that text is what this test exists to stop.
+    #[test]
+    fn base58check_checksum_is_the_first_four_bytes_of_double_sha256() {
+        use super::{decode, verify_check};
+        let payload = b"forager".as_slice();
+        let raw = decode(&encode_check(payload)).expect("encode_check emits base58");
+        let (got_payload, checksum) = raw.split_at(raw.len() - 4);
+        assert_eq!(got_payload, payload);
+        assert_eq!(checksum, &crate::hash::double_sha256(payload)[..4]);
+        assert_eq!(verify_check(&raw), Some(payload));
     }
 
     #[test]
