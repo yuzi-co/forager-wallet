@@ -604,6 +604,13 @@ mod tests {
     /// Monero **testnet** for the same key (`--coin xmr --testnet`), which detection could not read
     /// until the empty-tag filter came out of [`cryptonote_tags`]. Prefix 53 renders addresses
     /// opening with either `9` or `A`, so the derived tag is empty.
+    ///
+    /// The same string is the derivation side's known-answer vector in `forager-wallet`'s
+    /// `families/cryptonote.rs` (`monero_testnet_address_uses_network_byte_53`), arrived at
+    /// separately, where its Keccak-256 checksum was also confirmed by hand against a from-scratch
+    /// decoder. Monero's own documentation says testnet addresses start with `9`; that is a
+    /// property of most keys, not of the prefix, and assuming it is what left this address
+    /// unclassifiable.
     const XMR_TESTNET_PRIVKEY1: &str = "9tLR1ZnmsrNTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQeidLrM";
 
     #[test]
