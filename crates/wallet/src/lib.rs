@@ -766,6 +766,33 @@ mod tests {
         assert_eq!(testnet.address, "m3X1szP1kjNGHZPRtWR4gX5jj6XNYKHWwN");
     }
 
+    /// KAD P2PKH for privkey=1.
+    /// Chain params confirmed: kadikamateam/kadikama/src/chainparams.cpp
+    ///   PUBKEY_ADDRESS=45(0x2d), SECRET_KEY=176(0xb0); testnet PUBKEY_ADDRESS=46(0x2e).
+    /// Address computed via the same independent base58check oracle described above, which was
+    /// re-checked in the same run against BTC version 0 and reproduced
+    /// 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH.
+    ///
+    /// Mainnet and testnet both render a leading `K`: version 45 spans K7D9…KWYk and version 46
+    /// spans KWYk…KutM, adjacent ranges. So the leading character does NOT separate the networks
+    /// here, and only the decoded version byte does — which is why the testnet assertion below is
+    /// a whole address and not a prefix test.
+    #[test]
+    fn kad_p2pkh_privkey_one() {
+        let w = address_from_secret("kad", PRIV1, Network::Mainnet).unwrap();
+        assert_eq!(w.address, "KHtQs3JaKBiBwpTtKf6feVfPSp3131uG3M");
+        assert_eq!(w.coin, "kad");
+        match &w.secret_std {
+            SecretStd::Wif(s) => {
+                assert_eq!(s, "T33ydQRKp4FCW5LCLLUB7deioUMoveiwekdwUwyfRDeGZm76aUjV");
+            }
+            _ => panic!("expected SecretStd::Wif"),
+        }
+
+        let testnet = address_from_secret("kad", PRIV1, Network::Testnet).unwrap();
+        assert_eq!(testnet.address, "KhE1r9bs2NB4mFbyM5Rz8cwB5KHwmcP829");
+    }
+
     /// DOGE P2PKH for privkey=1.
     /// Chain params confirmed: dogecoin/dogecoin/src/chainparams.cpp
     ///   PUBKEY_ADDRESS=30(0x1e), SECRET_KEY=158(0x9e).

@@ -239,3 +239,46 @@ fn every_generated_xdag_address_round_trips_through_detection() {
         );
     }
 }
+
+/// Every KAD address the generator emits classifies as the form the live chain issues.
+///
+/// Kadikama is the coin table's one row where the chain params and the network's practice
+/// disagree: Kadikama Core activates SegWit at height 0 and Taproot from genesis with
+/// `bech32_hrp = "kad"`, yet the network issues base58 `K…` addresses — the project's own site
+/// names "K-addresses" as a defining property, and every miner address on the official pool
+/// decodes to version 45. The row resolves that in favour of P2PKH so a generated payout address
+/// is one a pool credits. This asserts the two halves of that decision still agree: the generator
+/// emits the base58 form, and detection answers `P2pkh` for it.
+///
+/// Both networks, because version 45 (mainnet) and 46 (testnet) render adjacent base58 ranges that
+/// both open with `K` — a leading character cannot tell them apart, so a swapped pair of version
+/// bytes would survive any test that only looked at the first character.
+#[test]
+fn every_generated_kad_address_round_trips_through_detection() {
+    // The privkey=1 vector `lib.rs` pins the address string against, so a change to either side
+    // shows up here.
+    const PRIV1: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+    let w = forager_wallet::address_from_secret("kad", PRIV1, Network::Mainnet).unwrap();
+    assert_eq!(w.address, "KHtQs3JaKBiBwpTtKf6feVfPSp3131uG3M");
+
+    for network in [Network::Mainnet, Network::Testnet] {
+        for i in 1u32..=32 {
+            let secret = format!("{i:064x}");
+            let w = forager_wallet::address_from_secret("kad", &secret, network).unwrap();
+            assert!(w.address.starts_with('K'), "key {secret}: {}", w.address);
+            assert_eq!(w.address.len(), 34, "key {secret}: {}", w.address);
+            assert_eq!(
+                detect_family(&w.address),
+                Some(Family::P2pkh),
+                "key {secret}: {}",
+                w.address
+            );
+            assert_eq!(
+                check(&w.address, Family::P2pkh),
+                Verdict::Ok,
+                "{}",
+                w.address
+            );
+        }
+    }
+}

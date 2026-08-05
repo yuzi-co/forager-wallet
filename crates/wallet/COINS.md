@@ -56,6 +56,7 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `rvn` | Ravencoin | P2PKH | `R…` | `m/44'/175'` |
 | `firo` | Firo | P2PKH | `a…` (most keys) | `m/44'/136'` |
 | `mewc` | Meowcoin | P2PKH | `M…` | `m/44'/1669'` |
+| `kad` | Kadikama | P2PKH | `K…` | — |
 | `zec` | Zcash (transparent) | P2PKH | `t1…` | `m/44'/133'` |
 | `btg` | Bitcoin Gold | P2PKH | `G…` | `m/44'/156'` |
 | `kmd` | Komodo | P2PKH | `R…` | `m/44'/141'` |
@@ -96,6 +97,13 @@ Three rows need a word of explanation:
 
 **Testnet.** `--testnet` works where the coin defines one. `--legacy` renders the base58 form for a
 SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
+
+**Kadikama runs SegWit, but pays out in base58.** Kadikama Core activates SegWit at height 0 and
+Taproot from genesis, so a `kad1…` address is valid on the chain. `kad` is nonetheless registered
+as P2PKH, because the `K…` form is what the network issues: Kadikama's own site names
+"K-addresses" as a defining property of the chain, and every miner address on the official pool
+decodes to version 45. Generate the form a pool will credit. This tool does not produce `kad1…`,
+and `forager-addr` reports one as unrecognized rather than guessing.
 
 ## HD purposes
 
