@@ -582,7 +582,9 @@ pub static COINS: &[CoinSpec] = &[
         },
         hd_slip44: Some(323),
     },
-    // vtc, dgb: deferred until their KATs land.
+    // dgb: deferred until its KATs land.  (vtc landed: it is a SegWit v0 row above, with
+    // single-key, --legacy and testnet KATs in the wallet crate and BIP44/84/86 vectors in
+    // tests/hd_kat.rs.)
 ];
 
 /// Look up a coin by ticker (case-insensitive).  Returns `None` for unknown tickers.
