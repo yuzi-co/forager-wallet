@@ -8,11 +8,13 @@ forager-wallet new --coin btc                             # mint an address + se
 forager-wallet new --hd --coin btc                        # BIP39 mnemonic, 24 words
 forager-wallet new --hd --all --purpose taproot           # every HD coin at m/86'
 forager-wallet restore <secret-or-wif> --coin btc         # re-derive from a key you hold
-forager-wallet restore --mnemonic "<24 words>" --coin btc
+forager-wallet restore --mnemonic "<12–24 words>" --coin btc
 ```
 
-`--hd` derives from a 24-word BIP39 mnemonic. Each coin defaults to the purpose whose address type
-it actually pays out in, so `--hd` and single-key mode hand out the same kind of address.
+`--hd` derives from a BIP39 mnemonic. A phrase this tool **mints** is always 24 words (256-bit
+entropy — the strongest BIP39 defines); a phrase you **supply** for restore may be any legal
+length, 12, 15, 18, 21 or 24 words. Each coin defaults to the purpose whose address type it
+actually pays out in, so `--hd` and single-key mode hand out the same kind of address.
 
 | `--purpose` | Path | Address |
 |---|---|---|
@@ -34,7 +36,7 @@ Only an independent re-derivation does that.
 1. Generate an address and back up the secret. It is printed once and never stored.
 2. Re-derive the same address from the same secret, in software that is not this tool:
    - single-key: any standard WIF importer;
-   - `--hd`: any standard BIP39 wallet, from the same 24-word mnemonic and the same path.
+   - `--hd`: any standard BIP39 wallet, from the same mnemonic and the same path.
 
    `forager-wallet restore` is a cheap first check, but it is **not independent** — it re-runs the
    same code that minted the address. Only other software proves the address.
@@ -46,9 +48,14 @@ The known-answer vectors are in this crate's tests, so you can check the scheme 
 
 ## Offline by construction
 
-The crate depends on `k256`, `bip32`, `zeroize`, `sha2`, `blake2b_simd`, `getrandom`, `num-bigint`,
-`num-traits` and `forager-addr`. **None of them can open a socket.** You can confirm the
-no-network claim by reading `Cargo.toml`, without reading any code.
+The crate depends on `k256`, `bip32`, `zeroize`, `sha2`, `pbkdf2`, `unicode-normalization`,
+`blake2b_simd`, `getrandom`, `num-bigint`, `num-traits` and `forager-addr`. **None of them can open
+a socket.** You can confirm the no-network claim by reading `Cargo.toml`, without reading any code.
+
+BIP-39 (mnemonic ↔ entropy, and phrase → seed) is implemented in this crate rather than delegated,
+in `src/bip39.rs`, against the official `trezor/python-mnemonic` vectors. `bip32` is still used, for
+BIP-32 child-key derivation. `pbkdf2` is the BIP-39 key-derivation function and
+`unicode-normalization` supplies the NFKD the spec mandates on both the phrase and the passphrase.
 
 Private keys and seeds are zeroed on drop, and the crate is `#![forbid(unsafe_code)]`.
 

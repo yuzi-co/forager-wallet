@@ -1,0 +1,64 @@
+[package]
+name = "forager-addr-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# cargo-fuzz convention: the harness declares its own workspace so it is not a member of the parent
+# one. It has to be separate — it builds with `-Z sanitizer=address` and `panic = "abort"` on a
+# nightly toolchain, and it pulls in `libfuzzer-sys`, a dependency the audited `forager-addr`
+# dependency list (guarded by `crates/addr/tests/hygiene.rs`) must never grow. The root manifest's
+# `exclude = ["fuzz"]` is the matching half.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.forager-addr]
+path = "../crates/addr"
+
+# libFuzzer needs symbols to attribute coverage and to print a usable stack trace on a crash, and
+# the release profile in the parent workspace strips them.
+[profile.release]
+debug = 1
+
+# One binary per logical parser. `test`/`doc`/`bench` are off because a `#![no_main]` libFuzzer
+# target is not a normal Rust binary and `cargo test` would fail to link it.
+
+[[bin]]
+name = "detect_family"
+path = "fuzz_targets/detect_family.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "base58"
+path = "fuzz_targets/base58.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bech32"
+path = "fuzz_targets/bech32.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hexbytes"
+path = "fuzz_targets/hexbytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_token"
+path = "fuzz_targets/parse_token.rs"
+test = false
+doc = false
+bench = false

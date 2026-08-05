@@ -10,7 +10,7 @@ forager-wallet new --coin btc                    # mint an address + secret
 forager-wallet new --hd --coin btc               # BIP39 mnemonic, native SegWit (m/84')
 forager-wallet new --hd --all --purpose taproot  # every HD coin at m/86'
 forager-wallet restore <secret-or-wif> --coin btc # re-derive from a key you hold
-forager-wallet restore --mnemonic "<24 words>" --coin btc
+forager-wallet restore --mnemonic "<12–24 words>" --coin btc
 ```
 
 ---
@@ -35,9 +35,9 @@ Run `cargo test` to check the known-answer vectors yourself.
 
 ## Offline by construction
 
-The dependency list is `k256`, `bip32`, `zeroize`, `sha2`, `blake2b_simd`, `getrandom`,
-`num-bigint`, `num-traits`. **None of them can open a socket.** You can confirm the no-network claim
-by reading `Cargo.toml`, without reading a line of code.
+The dependency list is `k256`, `bip32`, `zeroize`, `sha2`, `pbkdf2`, `unicode-normalization`,
+`blake2b_simd`, `getrandom`, `num-bigint`, `num-traits`. **None of them can open a socket.** You can
+confirm the no-network claim by reading `Cargo.toml`, without reading a line of code.
 
 Private keys and seeds are zeroed on drop. Both crates are `#![forbid(unsafe_code)]`.
 
@@ -87,9 +87,11 @@ Run `forager-wallet list` for the live table.
 
 ### HD derivation
 
-`--hd` derives from a 24-word BIP39 mnemonic. Each coin defaults to the purpose whose address type
-matches its single-key output, so `new --coin btc` and `new --hd --coin btc` give the same kind of
-address:
+`--hd` derives from a BIP39 mnemonic. A phrase this tool mints is always 24 words (256-bit entropy,
+the strongest length BIP39 defines); a phrase you supply for restore may be any legal length — 12,
+15, 18, 21 or 24 words — and the BIP39 passphrase may be any Unicode string, NFKD-normalized as the
+specification requires. Each coin defaults to the purpose whose address type matches its single-key
+output, so `new --coin btc` and `new --hd --coin btc` give the same kind of address:
 
 | `--purpose` | Path | Address |
 |---|---|---|

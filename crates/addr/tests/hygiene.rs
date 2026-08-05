@@ -10,12 +10,13 @@
 
 /// The complete allowed external dependency set.
 ///
-/// `sha2` computes the base58check checksum. `num-bigint` and `num-traits` do base58's decode
-/// arithmetic — base58's alphabet is not a power of two, so the conversion needs bignums. None of
-/// the three carries an entropy source, curve arithmetic or a network.
+/// `sha2` computes the base58check checksum and `blake2b_simd` the Ergo P2PK one. `num-bigint` and
+/// `num-traits` do base58's decode arithmetic — base58's alphabet is not a power of two, so the
+/// conversion needs bignums. None of the four carries an entropy source, curve arithmetic or a
+/// network.
 ///
 /// Adding to this list is a deliberate decision, not an accident. Read the spec before changing it.
-const ALLOWED: &[&str] = &["sha2", "num-bigint", "num-traits"];
+const ALLOWED: &[&str] = &["sha2", "blake2b_simd", "num-bigint", "num-traits"];
 
 /// Parse the crate's own `[dependencies]` section into a list of dependency names.
 fn declared_dependencies(manifest: &str) -> Vec<String> {
@@ -54,6 +55,18 @@ fn dependency_list_is_exactly_the_allowed_set() {
             "wallet-addr grew a dependency on `{name}`. The closed miner links this crate; adding \
              a curve, entropy or mnemonic crate here breaks the no-keygen claim. See \
              the repository README."
+        );
+    }
+
+    // The reverse direction, mirroring the sibling guard in `crates/wallet/tests/
+    // dependency_hygiene.rs`: an entry left in ALLOWED after the manifest dropped it is not
+    // harmless. An allow-list is a gate, so an unused entry is a pre-authorized slot — that crate
+    // could come back later and clear the gate with nobody deciding anything.
+    for allowed in ALLOWED {
+        assert!(
+            found.iter().any(|n| n == allowed),
+            "ALLOWED lists `{allowed}`, which is no longer a dependency. Drop it here rather than \
+             leaving a pre-authorized slot behind."
         );
     }
 }
