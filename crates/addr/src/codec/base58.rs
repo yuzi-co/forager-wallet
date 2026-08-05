@@ -74,12 +74,22 @@ pub fn decode(s: &str) -> Option<Vec<u8>> {
 /// (`version ‖ data`) without the checksum, or `None` if the string is invalid, too short, or the
 /// checksum does not match — i.e. `Some` proves a well-formed Bitcoin-style address.
 pub fn decode_check(s: &str) -> Option<Vec<u8>> {
-    let raw = decode(s)?;
+    Some(verify_check(&decode(s)?)?.to_vec())
+}
+
+/// The base58check half of [`decode_check`], over bytes that are already decoded: verify the
+/// trailing 4-byte double-SHA256 checksum and return the payload without it.
+///
+/// Split out so a caller that needs both the checked payload and the raw bytes pays for one decode
+/// instead of two. [`crate::validate::detect_family`] is that caller: base58check families and the
+/// unchecked base58 families (Alephium, Ergo) sit in adjacent arms, and it used to run the full
+/// quadratic bignum decode of the same string once for each.
+pub fn verify_check(raw: &[u8]) -> Option<&[u8]> {
     if raw.len() < 5 {
         return None;
     }
     let (payload, checksum) = raw.split_at(raw.len() - 4);
-    (crate::hash::double_sha256(payload)[..4] == *checksum).then(|| payload.to_vec())
+    (crate::hash::double_sha256(payload)[..4] == *checksum).then_some(payload)
 }
 
 #[cfg(test)]
