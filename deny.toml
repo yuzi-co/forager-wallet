@@ -61,6 +61,60 @@ wildcards = "warn"
 # Intra-workspace path deps are declared without a version; that's expected here.
 allow-wildcard-paths = true
 
+# The machine-checked half of the "offline by construction" claim.
+#
+# README.md and crates/wallet/README.md both tell the reader that none of our dependencies can
+# open a socket, and invite them to confirm it from `Cargo.toml` alone. That invitation is only
+# honest if something fails when it stops being true — prose does not fail CI. This list is that
+# something: if any of these enters the graph, directly or transitively, `cargo deny check` fails
+# and the README must be corrected before the change can land.
+#
+# `[graph] all-features = true` above means this is evaluated with every feature enabled, so a
+# network stack hidden behind an off-by-default feature is caught too, not just the default build.
+#
+# None of these are in the tree today (verified with `cargo tree --all-features --target all`), so
+# the list costs nothing until the day it earns its keep. It is a denylist, not a proof: it names
+# the crates a Rust program realistically reaches for to talk to a network, and a determined author
+# could still hand-roll a socket. It raises the bar from "nobody noticed" to "somebody decided".
+# Extend it rather than removing entries; if one must be removed, the READMEs change in the same
+# commit.
+deny = [
+    # Async runtimes and reactors — the event loops that own the sockets.
+    "tokio",
+    "mio",
+    "async-std",
+    "smol",
+    "async-io",
+    # Raw socket bindings.
+    "socket2",
+    # HTTP clients, native and pure-Rust alike.
+    "reqwest",
+    "ureq",
+    "isahc",
+    "attohttpc",
+    "surf",
+    "curl",
+    "curl-sys",
+    # HTTP protocol machinery and servers. `hyper` covers both client and server use.
+    "hyper",
+    "hyper-util",
+    "h2",
+    "axum",
+    "actix-web",
+    "warp",
+    "tonic",
+    # TLS stacks. Nothing offline needs to negotiate a session key with a remote peer; their
+    # presence is evidence of a transport even when the transport crate itself is not visible.
+    "rustls",
+    "native-tls",
+    "openssl",
+    "openssl-sys",
+    # WebSockets and QUIC.
+    "tungstenite",
+    "tokio-tungstenite",
+    "quinn",
+]
+
 [sources]
 # Only crates.io is allowed as a registry; unknown git sources are rejected.
 unknown-registry = "deny"
