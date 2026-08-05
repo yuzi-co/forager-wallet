@@ -51,23 +51,41 @@ const ALLOWED: &[&str] = &[
 ///
 /// Reading the manifest text rather than `cargo metadata` keeps the guard dependency-free — a test
 /// that defends a dependency list should not need a dependency to run.
+/// Two manifest shapes, because `cargo package` does not ship the one that was written. Publishing
+/// rewrites the manifest, normalizing every dependency into its own `[dependencies.<name>]` table,
+/// so a parser that only understands the inline `[dependencies]` form panics on an extracted
+/// `.crate` — the one situation where this guard matters most, since a user verifying the
+/// no-network claim from a published tarball is exactly who it is written for. The sibling guard in
+/// `crates/addr/tests/hygiene.rs` had the same defect and carries the same fix.
 fn declared_dependencies(manifest: &str) -> Vec<String> {
-    let section = manifest
-        .split("[dependencies]")
-        .nth(1)
-        .expect("crate has a [dependencies] section")
-        .split("\n[")
-        .next()
-        .expect("the dependencies section is terminated by another section or end of file");
+    let mut names = Vec::new();
 
-    section
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .filter_map(|l| l.split(['=', ' ']).next())
-        .filter(|n| !n.is_empty())
-        .map(str::to_string)
-        .collect()
+    // Shape 1 — an inline `[dependencies]` table. Terminated by the next section header or by the
+    // end of the file. `[dev-dependencies]`, `[build-dependencies]` and `[dependencies.name]` all
+    // fail to contain the literal `[dependencies]`, so none of them opens this section by mistake.
+    if let Some(rest) = manifest.split("[dependencies]").nth(1) {
+        let section = rest.split("\n[").next().unwrap_or(rest);
+        names.extend(
+            section
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .filter_map(|l| l.split(['=', ' ']).next())
+                .filter(|n| !n.is_empty())
+                .map(str::to_string),
+        );
+    }
+
+    // Shape 2 — one `[dependencies.name]` table per dependency, which is what publishing writes.
+    names.extend(
+        manifest
+            .lines()
+            .map(str::trim)
+            .filter_map(|l| l.strip_prefix("[dependencies.")?.strip_suffix(']'))
+            .map(str::to_string),
+    );
+
+    names
 }
 
 #[test]
@@ -110,6 +128,30 @@ fn parser_rejects_a_disallowed_dependency() {
     let fake = "[dependencies]\nk256 = \"0.13\"\ntokio = { version = \"1\" }\n\n[lints]\n";
     let found = declared_dependencies(fake);
     assert_eq!(found, vec!["k256", "tokio"]);
+    assert!(!found.iter().all(|n| ALLOWED.contains(&n.as_str())));
+}
+
+#[test]
+fn the_parser_reads_the_manifest_shape_cargo_package_writes() {
+    // The tarball's manifest, in miniature. Pinned synthetically rather than only by the real run
+    // above, because the real run never sees this shape: `cargo package -p forager-wallet` cannot
+    // even resolve until `forager-addr` 0.2.0 is on crates.io, so nothing here would exercise the
+    // packaged form until the day someone publishes — and a guard that starts working only after
+    // release is not a guard.
+    let packaged = concat!(
+        "[package]\nname = \"forager-wallet\"\n\n",
+        "[dependencies.k256]\nversion = \"0.13\"\n\n",
+        "[dependencies.zeroize]\nversion = \"1\"\n\n",
+        "[lints.rust]\n",
+    );
+    let found = declared_dependencies(packaged);
+    assert_eq!(found, vec!["k256", "zeroize"]);
+
+    // A network stack has to be caught in this shape too; that the gate holds for a tarball build
+    // is the entire reason for parsing it.
+    let grown = format!("{packaged}[dependencies.tokio]\nversion = \"1\"\n");
+    let found = declared_dependencies(&grown);
+    assert!(found.iter().any(|n| n == "tokio"));
     assert!(!found.iter().all(|n| ALLOWED.contains(&n.as_str())));
 }
 
