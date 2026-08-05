@@ -8,12 +8,13 @@
 
 use forager_wallet::{check, detect_family, Family, Network, Verdict};
 
+const PRIV1: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
 /// A CryptoNote fork with a multi-byte network prefix is detected as CryptoNote — the case a
 /// first-character `4`/`8` test could not see.  The addresses are minted from the coin rows
 /// themselves, so this cannot drift from what the generator emits.
 #[test]
 fn detects_multibyte_prefix_cryptonote_forks() {
-    const PRIV1: &str = "0000000000000000000000000000000000000000000000000000000000000001";
     for (ticker, tag) in [("zeph", "ZEPHYR"), ("sal", "SaLv")] {
         let w = forager_wallet::address_from_secret(ticker, PRIV1, Network::Mainnet).unwrap();
         assert!(w.address.starts_with(tag), "{ticker}: {}", w.address);
@@ -23,6 +24,126 @@ fn detects_multibyte_prefix_cryptonote_forks() {
             "{ticker}: {}",
             w.address
         );
+    }
+}
+
+/// Every CryptoNote address the generator emits is detected as `Family::CryptoNote`, and every
+/// one-character corruption of it is not.
+///
+/// Detection used to answer this family from the address's length and leading characters alone,
+/// both of which are a function of the network prefix and neither of which a typo disturbs — so a
+/// corrupted Monero address came back as a confident `CryptoNote`. The scheme does carry a
+/// checksum, `keccak256(varint(prefix) ‖ spend ‖ view)[..4]`, over bytes the address itself
+/// carries; the arm now decodes the block-base58, reads the prefix varint and verifies it.
+///
+/// This is the generator-side counterpart to the sweep in `validate.rs`: the inputs come through
+/// the real derivation path rather than as literals, and all three prefix widths are covered
+/// (Monero's one byte, Salvium's four, Zephyr's five), which is what pins the varint being read
+/// rather than the first byte being taken.
+///
+/// Four keys per row rather than the dozens the Ergo and XDAG sweeps below use: those exist to hit
+/// a probabilistic collision, this one does not, and a CryptoNote address costs two Ed25519 scalar
+/// multiplications on this crate's own clean-room curve — an order of magnitude more than a
+/// secp256k1 one through `k256`. Sixteen addresses cover every prefix the table has, which is what
+/// this is for.
+#[test]
+fn every_generated_cryptonote_address_round_trips_through_detection() {
+    // Monero is the one row with a testnet prefix, and it is the case detection used to lose
+    // entirely: prefix 53 renders addresses opening with `9` or with `A` depending on the key, so
+    // the leading tag derived from it is empty, and the empty tag was filtered away along with
+    // every testnet address it stood for. See `validate.rs`'s `detects_monero_testnet`.
+    for (ticker, network) in [
+        ("xmr", Network::Mainnet),
+        ("xmr", Network::Testnet),
+        ("zeph", Network::Mainnet),
+        ("sal", Network::Mainnet),
+    ] {
+        for i in 1u32..=4 {
+            let secret = format!("{i:064x}");
+            let w = forager_wallet::address_from_secret(ticker, &secret, network).unwrap();
+            assert_eq!(
+                detect_family(&w.address),
+                Some(Family::CryptoNote),
+                "{ticker} {network:?} key {secret}: {}",
+                w.address
+            );
+            assert_eq!(
+                check(&w.address, Family::CryptoNote),
+                Verdict::Ok,
+                "{}",
+                w.address
+            );
+
+            // One character changed in the key region: same length, same leading tag, same
+            // charset. Only the checksum separates it from the address above.
+            let mut bytes = w.address.clone().into_bytes();
+            let j = bytes.len() / 2;
+            bytes[j] = if bytes[j] == b'A' { b'B' } else { b'A' };
+            let bad = String::from_utf8(bytes).unwrap();
+            assert_ne!(detect_family(&bad), Some(Family::CryptoNote), "{bad}");
+        }
+    }
+}
+
+/// Every Ethereum address the generator emits is detected as `Family::Ethereum`, in all three
+/// castings, and a broken EIP-55 checksum is not.
+///
+/// The generator writes the EIP-55 mixed case (`families/ethereum.rs`), so what it emits carries a
+/// checksum and detection verifies it. Lower-cased and upper-cased, the same address carries none
+/// and must still be accepted — that is EIP-55's own backwards compatibility, and refusing it would
+/// warn a user off a correct payout address. Flipping one letter's case leaves a string that is
+/// still 40 hex characters and still mixed case, and only the checksum rejects it.
+#[test]
+fn every_generated_ethereum_address_round_trips_through_detection() {
+    for i in 1u32..=32 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("eth", &secret, Network::Mainnet).unwrap();
+        let body = &w.address[2..];
+        assert_eq!(
+            detect_family(&w.address),
+            Some(Family::Ethereum),
+            "key {secret}: {}",
+            w.address
+        );
+        assert_eq!(
+            check(&w.address, Family::Ethereum),
+            Verdict::Ok,
+            "{}",
+            w.address
+        );
+        assert_eq!(
+            detect_family(&format!("0x{}", body.to_ascii_lowercase())),
+            Some(Family::Ethereum),
+            "{}",
+            w.address
+        );
+        assert_eq!(
+            detect_family(&format!("0x{}", body.to_ascii_uppercase())),
+            Some(Family::Ethereum),
+            "{}",
+            w.address
+        );
+
+        // Flip the case of the first letter. An address with no letters at all carries no checksum
+        // to break, so there is nothing to assert for it — skip rather than pretend.
+        let Some(j) = body.bytes().position(|b| b.is_ascii_alphabetic()) else {
+            continue;
+        };
+        let mut bytes = body.as_bytes().to_vec();
+        bytes[j] = if bytes[j].is_ascii_uppercase() {
+            bytes[j].to_ascii_lowercase()
+        } else {
+            bytes[j].to_ascii_uppercase()
+        };
+        let bad = format!("0x{}", String::from_utf8(bytes).unwrap());
+        // Only meaningful while the result is still mixed case: a single-case string carries no
+        // checksum by definition, and the flip could have produced one on an address with a single
+        // letter of the opposite case.
+        let mixed = bad[2..].bytes().any(|b| b.is_ascii_lowercase())
+            && bad[2..].bytes().any(|b| b.is_ascii_uppercase());
+        if mixed {
+            assert_ne!(detect_family(&bad), Some(Family::Ethereum), "{bad}");
+        }
     }
 }
 

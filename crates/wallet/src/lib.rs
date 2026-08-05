@@ -36,7 +36,6 @@ mod curves;
 mod families;
 mod hash;
 pub mod hd;
-mod keccak;
 mod mnemonic;
 mod ripemd160;
 mod secret;

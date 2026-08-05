@@ -6,20 +6,19 @@
 //!
 //! Detection is checksum-verified wherever the scheme has a checksum at all — base58check
 //! double-SHA256, bech32/bech32m polymod, the CashAddr polymod for the Kaspa family, Blake2b-256
-//! for Ergo — so a corrupted address is not answered confidently.
+//! for Ergo, Keccak-256 for CryptoNote and for Ethereum's EIP-55 — so a corrupted address is not
+//! answered confidently.
 //!
-//! Two families still rest on structural shape, for different reasons, and both are marked at
-//! their arm.
+//! One family rests on structural shape, and it is marked at its arm. Alephium has no checksum to
+//! verify: it is `Base58(0x00 ‖ Blake2b256(pubkey))` with nothing appended, so a length and a
+//! leading byte are all there is to test. That is a property of the scheme, not a gap here.
 //!
-//! Alephium has no checksum to verify: it is `Base58(0x00 ‖ Blake2b256(pubkey))` with nothing
-//! appended, so a length and a leading byte are all there is to test.
-//!
-//! CryptoNote does have one — `keccak256(varint(prefix) ‖ spend(32) ‖ view(32))[..4]`, over bytes
-//! the address itself carries, so it is verifiable here in principle. Detection does not verify it
-//! because this crate has no Keccak implementation and adding one is a larger decision than this
-//! module should make on its own. That is a real remaining gap, not a property of the scheme, and
-//! saying so is the point: a corrupted Monero address can still be answered `CryptoNote` on the
-//! strength of its length and leading characters.
+//! Ethereum is a partial case, and honestly so. A `0x` address is 40 hex nibbles with no appended
+//! checksum; EIP-55 adds one by choosing the *case* of the hex letters, so an address written in
+//! mixed case carries a checksum and is verified, while one written all-lower or all-upper carries
+//! none and is accepted as it stands. That is not this crate declining to check — an all-lowercase
+//! address is valid and common, and rejecting it would warn a user off a correctly configured
+//! payout. What is checked is checked; what carries nothing cannot be.
 
 use std::sync::OnceLock;
 
@@ -62,9 +61,14 @@ pub fn detect_family(addr: &str) -> Option<Family> {
         return None;
     }
 
-    // 1. Ethereum: `0x` + 40 hex nibbles (EIP-55 mixed-case checksum not required for a warn).
+    // 1. Ethereum: `0x` + 40 hex nibbles, with the EIP-55 case checksum verified when the address
+    //    carries one. See [`eip55_case_checksum_holds`] for what "carries one" means and why an
+    //    address that does not is still accepted.
     if let Some(rest) = a.strip_prefix("0x").or_else(|| a.strip_prefix("0X")) {
-        if rest.len() == 40 && rest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if rest.len() == ETH_HEX_LEN
+            && rest.bytes().all(|b| b.is_ascii_hexdigit())
+            && eip55_case_checksum_holds(rest)
+        {
             return Some(Family::Ethereum);
         }
     }
@@ -145,16 +149,12 @@ pub fn detect_family(addr: &str) -> Option<Family> {
         }
     }
 
-    // 5. CryptoNote / Monero: base58 (block scheme) whose length and leading characters match what a
-    //    modelled network prefix forces. Keyed on the coin table, so a fork with a multi-byte prefix
-    //    (Zephyr `ZEPHYR…`, Salvium `SaLv…`) is recognised too — a first-character `4`/`8` test could
-    //    only ever see Monero.
-    if a.bytes().all(is_base58_char) {
-        for (tag, len) in cryptonote_tags() {
-            if a.len() == *len && a.starts_with(tag.as_str()) {
-                return Some(Family::CryptoNote);
-            }
-        }
+    // 5. CryptoNote / Monero: block-base58, `varint(prefix) ‖ spend(32) ‖ view(32) ‖ checksum(4)`,
+    //    with the Keccak-256 checksum verified. Keyed on the coin table, so a fork with a
+    //    multi-byte prefix (Zephyr `ZEPHYR…`, Salvium `SaLv…`) is recognised too — a
+    //    first-character `4`/`8` test could only ever see Monero.
+    if let Some(family) = cryptonote_family(a) {
+        return Some(family);
     }
 
     None
@@ -211,6 +211,51 @@ pub fn family_name(f: Family) -> &'static str {
     }
 }
 
+/// Characters in the hex body of an Ethereum address: 20 bytes, two nibbles each.
+const ETH_HEX_LEN: usize = 40;
+
+/// Whether the EIP-55 checksum an Ethereum address body carries — if it carries one — holds.
+///
+/// EIP-55 does not append anything. It writes the checksum into the *case* of the hex letters: hash
+/// the 40 lower-case ASCII characters with Keccak-256, and hex character `i` is upper-case exactly
+/// when nibble `i` of that digest is `>= 8`. Source: EIP-55 itself, and the generator's own
+/// `families/ethereum.rs`, which is the encoder this inverts.
+///
+/// Three cases, and the distinction between them is the whole point of this function:
+///
+/// - **Mixed case** — the address carries a checksum, and a single wrong character (or a single
+///   wrongly-cased letter) breaks it. Verified. This is the case that used to be answered
+///   confidently on shape alone.
+/// - **All lower-case or all upper-case** — no checksum is carried. EIP-55 is backwards-compatible
+///   by construction: the case-insensitive form predates it, wallets still emit it, and it is a
+///   perfectly valid address. Accepted unchanged. Rejecting it would warn a user off a correctly
+///   configured payout, which is the failure this module exists to prevent.
+/// - **No letters at all** — 40 hex digits with no `a`–`f`. Digits have no case, so no checksum can
+///   be encoded in them and none can be checked. Falls into the case above and is accepted.
+///
+/// Deciding "carries a checksum" by the presence of both cases is what EIP-55's own reference
+/// implementations do, and it is the only test available: the checksum lives in the case, so a
+/// string with one case throughout is indistinguishable from an un-checksummed address. The cost is
+/// that an address whose correct EIP-55 form happens to be entirely lower-case is accepted twice
+/// over, which is not a false answer, just an unexercised check.
+fn eip55_case_checksum_holds(body: &str) -> bool {
+    let has_lower = body.bytes().any(|b| b.is_ascii_lowercase());
+    let has_upper = body.bytes().any(|b| b.is_ascii_uppercase());
+    if !(has_lower && has_upper) {
+        return true;
+    }
+
+    let digest = crate::hash::keccak256(body.to_ascii_lowercase().as_bytes());
+    body.bytes().enumerate().all(|(i, c)| {
+        if c.is_ascii_digit() {
+            return true; // no case to carry a bit
+        }
+        // Nibble `i` of the digest: the high half of byte `i/2` for even `i`, the low half for odd.
+        let nibble = (digest[i / 2] >> if i % 2 == 0 { 4 } else { 0 }) & 0x0f;
+        (nibble >= 8) == c.is_ascii_uppercase()
+    })
+}
+
 fn kaspa_prefixes() -> impl Iterator<Item = &'static str> {
     COINS.iter().filter_map(|c| match c.params {
         FamilyParams::KaspaAddr { prefix, .. } => Some(prefix),
@@ -240,6 +285,50 @@ fn cryptonote_prefixes() -> impl Iterator<Item = u64> {
         .chain(std::iter::once(MONERO_SUBADDRESS_PREFIX))
 }
 
+/// The two public keys a CryptoNote address carries: `pub_spend(32) ‖ pub_view(32)`.
+const CRYPTONOTE_KEYS_LEN: usize = 64;
+
+/// Width of the truncated Keccak-256 checksum appended to a CryptoNote address payload.
+const CRYPTONOTE_CHECKSUM_LEN: usize = 4;
+
+/// Whether `a` is a CryptoNote address for a network prefix the coin table models, checksum
+/// verified.
+///
+/// The payload is `varint(prefix) ‖ spend(32) ‖ view(32) ‖ keccak256(everything before it)[..4]`,
+/// so every input to the checksum is inside the address — nothing external is needed to verify it,
+/// and this arm used not to. The consequence was the one this module exists to prevent: a Monero
+/// address with a mistyped character kept its length and its leading `4`, so it was answered
+/// `CryptoNote` with confidence by the very check whose job is to notice the typo.
+///
+/// The tag-and-length test is kept in front of the decode as a prescreen, not as the answer. It is
+/// cheap, it is derived from the coin table (see [`cryptonote_tag`]), and by the monotonicity
+/// argument there it never rejects a real address for a modelled prefix — so putting it first costs
+/// no recall and skips the decode for the overwhelming majority of strings that reach this far.
+///
+/// The decoded prefix is then matched against the table directly rather than inferred from the tag
+/// it matched: two prefixes can in principle share a leading tag and a length, and the varint is
+/// the authority on which one an address actually names.
+fn cryptonote_family(a: &str) -> Option<Family> {
+    if !a.bytes().all(is_base58_char) {
+        return None;
+    }
+    if !cryptonote_tags()
+        .iter()
+        .any(|(tag, len)| a.len() == *len && a.starts_with(tag.as_str()))
+    {
+        return None;
+    }
+
+    let raw = cryptonote::decode(a)?;
+    let (body, checksum) = raw.split_at(raw.len().checked_sub(CRYPTONOTE_CHECKSUM_LEN)?);
+    let (prefix, keys) = cryptonote::read_varint(body)?;
+    if keys.len() != CRYPTONOTE_KEYS_LEN || !cryptonote_prefixes().any(|p| p == prefix) {
+        return None;
+    }
+    (crate::hash::keccak256(body)[..CRYPTONOTE_CHECKSUM_LEN] == *checksum)
+        .then_some(Family::CryptoNote)
+}
+
 /// Every `(tag, address length)` pair the CryptoNote arm of [`detect_family`] tests against,
 /// derived once.
 ///
@@ -254,18 +343,26 @@ fn cryptonote_prefixes() -> impl Iterator<Item = u64> {
 /// characters, which is exactly the shape an unrecognized string tends to have, so the slow path
 /// was the one taken by input nobody vouched for.
 ///
-/// Empty tags are dropped here rather than skipped per call: a prefix wide enough that the two
-/// bracketing encodings share no leading character produces one, and it would match every string of
-/// the right length. Sorting and deduplicating collapses the rows that model the same prefix twice
-/// (a coin whose testnet prefix equals another row's, Monero's subaddress prefix alongside a fork
-/// that reuses it).
+/// An **empty** tag is kept, and that is a change the checksum paid for. A prefix whose two
+/// bracketing encodings share no leading character produces one, and an empty tag matches every
+/// base58 string of the right length — which, while this arm answered on shape alone, would have
+/// meant reporting `CryptoNote` for any 95-character base58 string. So empty tags were filtered out,
+/// with a note saying nothing in the table produced one.
+///
+/// Something did. Monero's **testnet** prefix, 53, straddles a base58 digit boundary: the low
+/// bracket's leading digit is 8 (`9`) and the high bracket's is 9 (`A`), so they agree nowhere and
+/// the tag is empty. Every Monero testnet address was therefore dropped before the comparison and
+/// classified `None` — the generator mints them (`--coin xmr --testnet`) and detection could not
+/// read them back. Now that [`cryptonote_family`] verifies the Keccak-256 checksum, an empty tag
+/// costs nothing but a decode on strings of one length, so the filter is gone and the recall with
+/// it.
+///
+/// Sorting and deduplicating collapses the rows that model the same prefix twice (a coin whose
+/// testnet prefix equals another row's, Monero's subaddress prefix alongside a fork that reuses it).
 fn cryptonote_tags() -> &'static [(String, usize)] {
     static TAGS: OnceLock<Vec<(String, usize)>> = OnceLock::new();
     TAGS.get_or_init(|| {
-        let mut tags: Vec<(String, usize)> = cryptonote_prefixes()
-            .map(cryptonote_tag)
-            .filter(|(tag, _)| !tag.is_empty())
-            .collect();
+        let mut tags: Vec<(String, usize)> = cryptonote_prefixes().map(cryptonote_tag).collect();
         tags.sort();
         tags.dedup();
         tags
@@ -282,6 +379,10 @@ fn cryptonote_tags() -> &'static [(String, usize)] {
 /// all-`0x00` and all-`0xff` brackets every real address, and the common prefix of those two
 /// extremes is the common prefix of every address in between. A fork picks its prefix precisely to
 /// make that shared prefix a human tag — Zephyr's `0x6241d18c0` yields `ZEPHYR…`.
+///
+/// The tag can be **empty**, and one modelled prefix produces one: nothing forces a prefix to
+/// straddle no base58 digit boundary, and Monero's testnet 53 straddles the very first. See
+/// [`cryptonote_tags`], which used to discard that case.
 fn cryptonote_tag(nb: u64) -> (String, usize) {
     let mut lo = Vec::new();
     cryptonote::write_varint(nb, &mut lo);
@@ -400,18 +501,229 @@ mod tests {
         );
     }
 
+    /// The four mixed-case addresses EIP-55 prints as its own worked examples, plus the one the
+    /// generator mints for `privkey = 1` (`forager-wallet restore 0000…0001 --coin eth`, and the
+    /// address `families/ethereum.rs` pins as its KAT). Every one of them is now checksum-verified
+    /// rather than accepted for being 40 hex characters, so a wrong literal here fails the test
+    /// instead of passing unnoticed.
+    const ETH_EIP55: [&str; 5] = [
+        "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+        "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+        "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+        "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+    ];
+
     #[test]
     fn detects_ethereum() {
+        for addr in ETH_EIP55 {
+            assert_eq!(detect_family(addr), Some(Family::Ethereum), "{addr}");
+        }
+    }
+
+    /// A mixed-case Ethereum address carries a checksum in the case of its hex letters, and this is
+    /// the arm that used to ignore it: `0x` plus 40 hex characters was answered `Ethereum` however
+    /// those characters were cased, so an address with a typo came back confident.
+    ///
+    /// Both corruptions a paste actually suffers are covered. Flipping a *letter's case* leaves a
+    /// string that is still 40 valid hex characters and still mixed case — the EIP-55 bit for that
+    /// position is simply wrong. Changing a *character's value* re-rolls the whole digest, so the
+    /// case pattern of the remaining letters no longer describes it.
+    #[test]
+    fn corrupted_mixed_case_ethereum_address_is_not_a_confident_family() {
+        for good in ETH_EIP55 {
+            let body = &good[2..];
+            let letters = body.bytes().filter(|b| b.is_ascii_alphabetic()).count();
+            assert!(letters > 1, "{good} must have letters to corrupt");
+
+            // Every single-letter case flip, so this does not depend on which letter was picked.
+            for i in 0..body.len() {
+                let c = body.as_bytes()[i];
+                if !c.is_ascii_alphabetic() {
+                    continue;
+                }
+                let mut bytes = body.as_bytes().to_vec();
+                bytes[i] = if c.is_ascii_uppercase() {
+                    c.to_ascii_lowercase()
+                } else {
+                    c.to_ascii_uppercase()
+                };
+                let bad = format!("0x{}", String::from_utf8(bytes).unwrap());
+                assert_ne!(detect_family(&bad), Some(Family::Ethereum), "{bad}");
+            }
+
+            // A mistyped hex digit rather than a mistyped case.
+            let mut bytes = body.as_bytes().to_vec();
+            let i = bytes.len() / 2;
+            bytes[i] = if bytes[i] == b'1' { b'2' } else { b'1' };
+            let bad = format!("0x{}", String::from_utf8(bytes).unwrap());
+            assert_ne!(detect_family(&bad), Some(Family::Ethereum), "{bad}");
+        }
+    }
+
+    /// An all-lower-case Ethereum address carries no checksum and must still be accepted. EIP-55 is
+    /// backwards-compatible on purpose — the case-insensitive form predates it and wallets still
+    /// emit it — so refusing one would warn a user off a payout address that is entirely correct,
+    /// which is the failure this module exists to prevent, inverted.
+    ///
+    /// The all-upper-case form is the same argument. So is an address with no letters at all: the
+    /// zero address is 40 digits, digits have no case, and no checksum can live in them.
+    #[test]
+    fn a_single_case_ethereum_address_carries_no_checksum_and_is_accepted() {
+        for good in ETH_EIP55 {
+            let body = &good[2..];
+            let lower = format!("0x{}", body.to_ascii_lowercase());
+            let upper = format!("0x{}", body.to_ascii_uppercase());
+            assert_eq!(detect_family(&lower), Some(Family::Ethereum), "{lower}");
+            assert_eq!(detect_family(&upper), Some(Family::Ethereum), "{upper}");
+            // The two really are single-case, so this is not silently re-testing the mixed form.
+            assert!(!lower.bytes().any(|b| b.is_ascii_uppercase()), "{lower}");
+            assert!(
+                !upper[2..].bytes().any(|b| b.is_ascii_lowercase()),
+                "{upper}"
+            );
+        }
         assert_eq!(
-            detect_family("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"),
+            detect_family("0x0000000000000000000000000000000000000000"),
             Some(Family::Ethereum)
         );
     }
 
+    /// A Monero mainnet address, and the multi-byte-prefix forks alongside it.
+    ///
+    /// The Monero string was already here and was already genuine — its Keccak-256 checksum
+    /// verifies — but nothing checked that until this arm learnt to. The two forks are minted by the
+    /// repository's own generator (`forager-wallet restore 0000…0001 --coin zeph|sal`), which is the
+    /// only way to get a real one: this crate cannot derive an address, and a hand-written CryptoNote
+    /// literal is exactly the kind of thing that survives review while being fiction.
+    const XMR_MAINNET: &str = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
+    const XMR_PRIVKEY1: &str = "42nsXK8WbVGTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQdF28r3";
+    const ZEPHYR_PRIVKEY1: &str = "ZEPHYR2LvQaFhaTiMGweEG1b39zyyYz7y8idgWcys4Ww8SJTaqQb31r31ubj36zrWh22GNtYZ8ou2cPihcgfXmUTSj6DsNXKg7o2Z";
+    const SALVIUM_PRIVKEY1: &str = "SaLvdTkfXMxepPZY3xgauGNmx8EXjN8Hj74xDqyDXzb5Ld9Za7bLhBH3AusnVy7aAh5fkR8P5r1iaSQCCjC7pGq6bRPJCeoZYeH";
+
+    /// Monero **testnet** for the same key (`--coin xmr --testnet`), which detection could not read
+    /// until the empty-tag filter came out of [`cryptonote_tags`]. Prefix 53 renders addresses
+    /// opening with either `9` or `A`, so the derived tag is empty.
+    const XMR_TESTNET_PRIVKEY1: &str = "9tLR1ZnmsrNTNayQ6Kjw5UdgqbQY5KCCufdxdCgF7NgTfjC69Mna7DJSYyie77hZTQ8H92G2HwgFhgEUYnDzrnLnQeidLrM";
+
     #[test]
     fn detects_monero() {
-        let xmr = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
-        assert_eq!(detect_family(xmr), Some(Family::CryptoNote));
+        assert_eq!(detect_family(XMR_MAINNET), Some(Family::CryptoNote));
+        assert_eq!(detect_family(XMR_PRIVKEY1), Some(Family::CryptoNote));
+    }
+
+    /// A Monero testnet address is CryptoNote. It was `None` before, for a reason worth stating
+    /// plainly: the arm tested a *derived* leading tag, [`cryptonote_tags`] discarded prefixes whose
+    /// tag came out empty, and testnet's prefix 53 is exactly such a prefix — its addresses open
+    /// with `9` or with `A` depending on the key, so no character is shared by all of them. The
+    /// filter existed because an empty tag, with no checksum behind it, would have matched every
+    /// 95-character base58 string. With the checksum verified it matches only real addresses, so the
+    /// filter is gone and every network the generator can mint for is classifiable.
+    #[test]
+    fn detects_monero_testnet() {
+        assert_eq!(
+            detect_family(XMR_TESTNET_PRIVKEY1),
+            Some(Family::CryptoNote)
+        );
+        assert_eq!(check(XMR_TESTNET_PRIVKEY1, Family::CryptoNote), Verdict::Ok);
+        // The tag really is empty, so this test is exercising the case it names.
+        assert_eq!(cryptonote_tag(53), (String::new(), 95));
+    }
+
+    /// An empty tag matches on length alone, so nothing but the checksum stands between a
+    /// 95-character base58 string and a confident `CryptoNote`. Pin that the checksum is in fact
+    /// standing there: these are base58 strings of exactly the right length and none of them is an
+    /// address.
+    #[test]
+    fn an_empty_tag_does_not_make_every_base58_string_of_that_length_cryptonote() {
+        assert_eq!(
+            cryptonote_tag(53).0,
+            "",
+            "the empty-tag case must still exist"
+        );
+        for junk in [
+            "9".repeat(95),
+            "A".repeat(95),
+            "z".repeat(95),
+            "9zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string(),
+        ] {
+            assert_eq!(junk.len(), 95, "{junk}");
+            assert!(junk.bytes().all(is_base58_char), "{junk}");
+            assert_ne!(detect_family(&junk), Some(Family::CryptoNote), "{junk}");
+        }
+    }
+
+    /// The multi-byte network prefixes, which are the reason the varint is read rather than the
+    /// first byte taken: Zephyr's prefix is five bytes and Salvium's three, so their addresses are
+    /// longer than Monero's and the keys start further in. Getting that wrong would misalign the
+    /// checksummed region and reject every fork address.
+    #[test]
+    fn detects_multibyte_prefix_cryptonote_forks() {
+        for addr in [ZEPHYR_PRIVKEY1, SALVIUM_PRIVKEY1] {
+            assert_eq!(detect_family(addr), Some(Family::CryptoNote), "{addr}");
+            assert_eq!(check(addr, Family::CryptoNote), Verdict::Ok, "{addr}");
+        }
+        // The three lengths really do differ, so the varint width is being exercised. Each is what
+        // its prefix width forces: Monero's one-byte 18 gives a 69-byte payload (8 full blocks plus
+        // a 5-byte tail, 88 + 7 = 95 characters), Salvium's four-byte 0x3ef318 a 72-byte payload
+        // (9 full blocks, 99), Zephyr's five-byte 0x6241d18c0 a 73-byte one (9 blocks plus a 1-byte
+        // tail, 99 + 2 = 101).
+        assert_eq!(XMR_PRIVKEY1.len(), 95);
+        assert_eq!(SALVIUM_PRIVKEY1.len(), 99);
+        assert_eq!(ZEPHYR_PRIVKEY1.len(), 101);
+    }
+
+    /// The point of the whole exercise on the CryptoNote side. The checksum is
+    /// `keccak256(varint(prefix) ‖ spend ‖ view)[..4]`, computed over bytes the address itself
+    /// carries — so it was always verifiable here, and was never verified, because this crate had
+    /// no Keccak. A Monero address with one wrong character keeps its 95 characters and its leading
+    /// `4`, and those were the whole test: it came back `CryptoNote`, confidently, from the check
+    /// whose job is to notice.
+    ///
+    /// The flip is in the key region rather than the tag, so the prescreen still passes and only
+    /// the checksum can reject it. Truncation is covered too, which the length test already caught
+    /// but which must keep being caught.
+    #[test]
+    fn corrupted_cryptonote_address_is_not_a_confident_family() {
+        for good in [XMR_MAINNET, XMR_PRIVKEY1, ZEPHYR_PRIVKEY1, SALVIUM_PRIVKEY1] {
+            assert_eq!(detect_family(good), Some(Family::CryptoNote), "{good}");
+
+            let mut bytes = good.as_bytes().to_vec();
+            let i = bytes.len() / 2;
+            bytes[i] = if bytes[i] == b'A' { b'B' } else { b'A' };
+            let bad = String::from_utf8(bytes).unwrap();
+            assert_eq!(bad.len(), good.len(), "the corruption must keep the length");
+            assert_ne!(detect_family(&bad), Some(Family::CryptoNote), "{bad}");
+
+            let truncated = &good[..good.len() - 1];
+            assert_ne!(
+                detect_family(truncated),
+                Some(Family::CryptoNote),
+                "{truncated}"
+            );
+        }
+    }
+
+    /// Every single-character substitution in a Monero address, swept, rather than the one flip
+    /// above. 95 positions × 57 other base58 characters is 5415 near misses, none of which may come
+    /// back `CryptoNote` — a four-byte checksum leaves a 2^-32 chance per string of a collision, so
+    /// a sweep this size is expected to be clean and any hit is a real defect in the arm rather than
+    /// bad luck.
+    #[test]
+    fn no_single_character_substitution_in_a_monero_address_still_detects() {
+        const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        let good = XMR_PRIVKEY1.as_bytes();
+        for i in 0..good.len() {
+            for &c in ALPHABET {
+                if c == good[i] {
+                    continue;
+                }
+                let mut bytes = good.to_vec();
+                bytes[i] = c;
+                let bad = String::from_utf8(bytes).unwrap();
+                assert_ne!(detect_family(&bad), Some(Family::CryptoNote), "{bad}");
+            }
+        }
     }
 
     /// Monero's tags are *derived* from its prefixes, not hard-coded: prefix 18 fixes exactly the
@@ -435,10 +747,8 @@ mod tests {
     /// put there. A row added to the table later is covered without editing this test.
     #[test]
     fn the_cached_cryptonote_tags_are_the_derived_ones() {
-        let derived: std::collections::HashSet<(String, usize)> = cryptonote_prefixes()
-            .map(cryptonote_tag)
-            .filter(|(tag, _)| !tag.is_empty())
-            .collect();
+        let derived: std::collections::HashSet<(String, usize)> =
+            cryptonote_prefixes().map(cryptonote_tag).collect();
         let cached: std::collections::HashSet<(String, usize)> =
             cryptonote_tags().iter().cloned().collect();
         assert_eq!(cached, derived);
@@ -449,15 +759,24 @@ mod tests {
         assert!(cached.contains(&("8".to_string(), 95)), "{cached:?}");
     }
 
-    /// An empty tag would match every base58 string of the right length, so it must never reach the
-    /// comparison. Nothing in the table produces one today; the filter exists for the prefix wide
-    /// enough that its two bracketing encodings share no leading character, and this pins that the
-    /// filter is what stands between such a row and a family answered on length alone.
+    /// The cache holds one empty tag and exactly one — Monero's testnet prefix 53. This is the
+    /// assertion that used to read "no cached tag is empty", passing only because the empty ones had
+    /// been filtered out one line earlier and taking a whole network's addresses with them.
+    ///
+    /// Pinning the count rather than merely allowing empties keeps the cost visible: each empty tag
+    /// sends every base58 string of its length through a decode and a Keccak, which is affordable
+    /// once and worth noticing if a future row makes it several times.
     #[test]
-    fn no_cached_cryptonote_tag_is_empty() {
-        for (tag, len) in cryptonote_tags() {
-            assert!(!tag.is_empty(), "empty tag for length {len}");
-        }
+    fn exactly_one_cached_cryptonote_tag_is_empty() {
+        let empty: Vec<_> = cryptonote_tags()
+            .iter()
+            .filter(|(tag, _)| tag.is_empty())
+            .collect();
+        assert_eq!(empty.len(), 1, "{:?}", cryptonote_tags());
+        assert_eq!(
+            empty[0].1, 95,
+            "the empty tag is Monero testnet's, 95 chars"
+        );
     }
 
     #[test]

@@ -105,7 +105,11 @@ tokens `coins.rs` pins as rejections.
 
 Alongside the valid addresses sit the near misses, which are the inputs that actually find bugs: a
 corrupted bech32 checksum, a WIF (valid base58check, unmodelled version byte), an empty CashAddr
-payload, a bare `0x`.
+payload, a bare `0x`. Each is one edit away from the valid seed beside it — a single character
+changed, a trailing character dropped, one hex letter's case flipped — because that is the shape a
+mistyped payout address has, and the shape a checksum exists to catch. The Ethereum seeds also carry
+the two castings that legitimately have *no* checksum to catch anything with: an address written all
+lower-case or all upper-case, which EIP-55 leaves valid and detection must keep accepting.
 
 libFuzzer writes the inputs it discovers back into the same directories, named by SHA-1. Those are
 generated and `.gitignore`d; the hand-picked seeds are un-ignored by their `.seed` suffix. libFuzzer

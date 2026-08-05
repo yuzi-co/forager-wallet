@@ -18,6 +18,15 @@ assert!(matches!(check("not-an-address", Family::P2pkh), Verdict::Unrecognized))
 Families: Taproot (bech32m), SegWit v0 (bech32), P2PKH (base58check), Ethereum (EIP-55),
 CryptoNote, Kaspa-family (CashAddr), Ergo, Alephium and XDAG, across 29 coins.
 
+Classification verifies a checksum wherever the scheme has one: base58check's double-SHA256,
+bech32/bech32m's polymod, CashAddr's polymod, Ergo's Blake2b-256, CryptoNote's Keccak-256, and
+Ethereum's EIP-55 case checksum. A mistyped address is therefore reported as unclassifiable rather
+than as a confident answer. Two scheme-level exceptions, stated plainly because they are the crate's
+limits and not its choices: an Alephium address carries no checksum at all, and an Ethereum address
+written entirely in lower or upper case carries none either — EIP-55 encodes its checksum in the
+case of the hex letters, so a single-case address is valid, common, and unverifiable. Both are
+accepted on their structure.
+
 ## What this crate deliberately does not contain
 
 No key material, no entropy source, no curve arithmetic, no mnemonic wordlist. Classification only
@@ -29,6 +38,13 @@ address checksums — `sha2` for base58check, `blake2b_simd` for Ergo — and th
 do base58's decode, whose alphabet is not a power of two. The test fails the build if a curve,
 entropy or mnemonic crate is ever added, and equally if an entry stops being used, so the list
 cannot become a set of pre-authorized slots.
+
+The fourth checksum hash, Keccak-256 — Ethereum's EIP-55 and CryptoNote's four-byte address
+checksum both use it — is written out in `src/hash.rs` rather than taken from a crate. It is a
+~130-line permutation with two published known-answer tests, and writing it out is what lets those
+two checksums be verified without spending an entry on this list. It is deliberately the *original*
+Keccak (`0x01` padding), not FIPS-202 SHA3-256 (`0x06`); a test asserts that distinction against
+both published digests, because the two differ in one byte and in nothing else visible.
 
 The crate is `#![forbid(unsafe_code)]`.
 

@@ -7,14 +7,16 @@
 //! This crate holds no key material, no entropy source and no curve arithmetic. Key generation
 //! lives in the separate `forager-wallet` crate. Its external dependencies are `sha2` and
 //! `blake2b_simd`, for the base58check and Ergo address checksums, and `num-bigint`/`num-traits`,
-//! for base58's non-power-of-two decode; `tests/hygiene.rs` enforces that list. See
+//! for base58's non-power-of-two decode; `tests/hygiene.rs` enforces that list. The fourth checksum
+//! hash, Keccak-256, is written out in [`hash`] rather than taken from a crate, so that verifying
+//! the Ethereum and CryptoNote checksums costs the dependency list nothing. See
 //! `the repository README`.
 
 #![forbid(unsafe_code)]
 
 pub mod codec;
 pub mod coins;
-pub(crate) mod hash;
+pub mod hash;
 pub mod hexbytes;
 pub mod validate;
 

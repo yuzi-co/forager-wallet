@@ -1,6 +1,12 @@
 use sha2::{Digest, Sha256};
 
-pub(crate) use crate::keccak::keccak256;
+// Keccak-256, for Ethereum's address derivation and EIP-55 case checksum and for the CryptoNote
+// address checksum. The implementation used to live here, in `src/keccak.rs`; it moved down into
+// `forager-addr` when detection grew a use for it — the classification half verifies both of those
+// checksums, and the same hash computing and checking a consensus-critical value has to be one
+// implementation, not two that can drift. `forager-addr` carries no curve, entropy source or
+// wordlist, so nothing about the split changed by moving a hash across it.
+pub(crate) use forager_addr::hash::keccak256;
 
 /// BIP340 tagged hash: `SHA256(SHA256(tag) ‖ SHA256(tag) ‖ msg)`.
 pub(crate) fn tagged_hash(tag: &str, msg: &[u8]) -> [u8; 32] {
