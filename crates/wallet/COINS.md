@@ -141,6 +141,15 @@ it for any coin whose address scheme is one of the families above.
 > that you read them correctly. The tool prints a warning and you must verify the address before
 > mining to it.
 
+A token sets **bytes, not hashes.** `p2pkh:` always hashes the pubkey with Bitcoin's HASH160 and
+checksums with Bitcoin's SHA256d — right for a Bitcoin-derived chain, wrong for Groestlcoin, whose
+base58check checksum is a double Groestl-512 (`Groestlcoin/groestlcoin`, `src/groestlcoin-hash.cpp`
+and `src/hash.h`). That substitution sits *inside* base58check, below the address layer, so the WIF
+comes out as wrong as the address and no `ver=` repairs either. Decred is not expressible at all: it
+hashes with BLAKE-256 and its address version is two bytes where `ver=` takes one (`decred/dcrd`,
+`dcrutil/hash160.go`, `chaincfg/chainhash/hashfuncs.go`, `chaincfg/mainnetparams.go`). The `segwit:`
+token's `--legacy` form and its WIF inherit the same assumption.
+
 ### Grammar
 
 ```
