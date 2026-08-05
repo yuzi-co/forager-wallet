@@ -121,6 +121,36 @@ fn doge_testnet_p2pkh_uses_version_0x71() {
     assert_ne!(w.address, "mrCDrCybB6J1vRfbwM5hemdJz73FwDBC8r");
 }
 
+/// Kadikama's testnet byte is `0x2e` (46), one above its mainnet `0x2d` (45), from Kadikama Core's
+/// chainparams.  Minted by this repository's generator and independently recomputed as
+/// `base58check(0x2e ‖ 751e76e8…33bd6)` by a from-scratch Python base58check oracle, which
+/// reproduced both the mainnet and testnet strings exactly.
+///
+/// **The leading character does not distinguish the two networks, and that is the point of this
+/// test.** Bracketing the whole HASH160 space at both ends gives, for `0x2d`, `K7D9JtQxx7rR…` to
+/// `KWYkHziFfJKJ…`, and for `0x2e`, `KWYkHziFfJKJ…` to `KutMH71YNUnB…` — all 34 characters, all
+/// leading `K`. So `K…` is *guaranteed* for both, and consecutive version bytes land inside one
+/// base58 character: testnet's low end is byte-for-byte mainnet's high end, because 46's range
+/// begins exactly where 45's ends. A reader cannot tell a Kadikama testnet payout address from a
+/// mainnet one by looking at it, and neither can a check that only inspects the first character.
+/// Pinning both strings is what separates them here.
+#[test]
+fn kad_testnet_p2pkh_uses_version_0x2e_and_looks_like_mainnet() {
+    let testnet = address_from_secret("kad", PRIV1, Network::Testnet).unwrap();
+    assert_eq!(testnet.address, "KhE1r9bs2NB4mFbyM5Rz8cwB5KHwmcP829");
+
+    let mainnet = address_from_secret("kad", PRIV1, Network::Mainnet).unwrap();
+    assert_eq!(mainnet.address, "KHtQs3JaKBiBwpTtKf6feVfPSp3131uG3M");
+
+    // Both `K`, both 34 characters — indistinguishable by shape, distinct by value. If a future
+    // edit made testnet render the mainnet byte, the first two assertions would still both pass
+    // shape checks; only this one would fail.
+    assert_ne!(testnet.address, mainnet.address);
+    assert!(testnet.address.starts_with('K'), "{}", testnet.address);
+    assert!(mainnet.address.starts_with('K'), "{}", mainnet.address);
+    assert_eq!(testnet.address.len(), mainnet.address.len());
+}
+
 /// Whether a row declares any testnet-specific parameter at all.
 ///
 /// Ergo, Alephium and XDAG are excluded by construction: their families take no `Option` testnet
@@ -154,7 +184,7 @@ fn declares_testnet(params: &coins::FamilyParams) -> bool {
 /// a testnet KAT for the new row — not something to update reflexively.
 ///
 /// Where each row's testnet output is pinned today:
-/// * `btc`, `ltc`, `scash`, `alpha`, `rvn`, `doge` — this file.
+/// * `btc`, `ltc`, `scash`, `alpha`, `rvn`, `doge`, `kad` — this file.
 /// * `xmr` — `families::cryptonote::tests::monero_testnet_address_uses_network_byte_53`.
 /// * `pearl`, `vtc`, `firo`, `mewc`, `kas`, `kls`, `spr` — their per-coin tests in `lib.rs`.
 #[test]
@@ -167,8 +197,8 @@ fn every_row_declaring_a_testnet_variant_has_a_testnet_kat() {
     assert_eq!(
         declared,
         [
-            "pearl", "btc", "ltc", "vtc", "doge", "rvn", "firo", "mewc", "xmr", "kas", "kls",
-            "spr", "scash", "alpha"
+            "pearl", "btc", "ltc", "vtc", "doge", "rvn", "firo", "mewc", "kad", "xmr", "kas",
+            "kls", "spr", "scash", "alpha"
         ]
     );
     // Every one of them must actually mint on testnet rather than error — the cheap half of the
