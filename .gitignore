@@ -2,3 +2,7 @@
 **/target
 Cargo.lock.bak
 *.pdb
+# Scratch git worktrees. Each is a checkout of this same repository, so `git add -A`
+# picks them up as gitlinks and commits a submodule reference to a path that only
+# exists on one machine.
+.claude/worktrees/

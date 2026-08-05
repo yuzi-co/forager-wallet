@@ -1,6 +1,6 @@
 [package]
 name = "forager-wallet"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = true
@@ -27,7 +27,7 @@ num-traits = "0.2"
 sha2 = { workspace = true }
 # Address classification + the coin table. Split out so the closed miner can link classification
 # without linking any key-generation code. See the repository README.
-forager-addr = { path = "../addr", version = "0.1.1" }
+forager-addr = { path = "../addr", version = "0.2.0" }
 # Blake2b-256, for the Ergo P2PK address checksum (already used elsewhere in the workspace for
 # Equihash's consensus-critical Blake2b — same well-vetted crate, not a new supply-chain surface).
 blake2b_simd = "1"
