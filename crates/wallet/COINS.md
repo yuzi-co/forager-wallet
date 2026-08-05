@@ -73,9 +73,11 @@ Three rows need a word of explanation:
   `BgGZ9tcN4rm9KBzDn7KprQz87SZ1k5oUs` (33 characters) and `0000…0002` mints
   `cMh228HTCiwS8ZsaakH8A8wze1FZeuap` (32). There is no prefix to document, and printing one would be
   a lie.
-- **`firo`** — `a…` is what version byte `0x52` renders for all but roughly 1.2% of keys. The
-  remainder land just below the base58 digit boundary and render `Z…` instead; both are ordinary
-  Firo addresses.
+- **`firo`** — `a…` is what version byte `0x52` renders for 98.8% of keys, not for all of them. The
+  other 1.2% fall just below the base58 boundary between `Z` and `a` and render `Z…` instead:
+  `restore 0000…003e --coin firo` mints `ZzzAu2nHnHNxMea5vbLyeD4nejtXDW57wY`. Both forms are
+  ordinary Firo addresses. This is the table's **only** majority-rather-than-guaranteed prefix —
+  every other base58 row's version bytes pin the leading characters for every possible key.
 
 **Testnet.** `--testnet` works where the coin defines one. `--legacy` renders the base58 form for a
 SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
