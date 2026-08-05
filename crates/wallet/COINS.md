@@ -25,9 +25,11 @@ Run `forager-wallet list` for the live table — this file documents it, and a t
 
 ## The coin table
 
-`default address` is what `new --coin <ticker>` produces. `HD` is the path `new --hd` uses by
-default; coins with no registered SLIP-44 coin type have no HD row, because inventing one would
-produce a path no other wallet reproduces.
+`Default address` is the leading part of what `new --coin <ticker>` produces; the `…` stands for the
+key-dependent remainder. The column is checked, not asserted: `tests/docs_coverage.rs` mints every
+row from the fixed key `0000…0001` and fails the build if the address does not start with the
+prefix written here. `HD` is the path `new --hd` uses by default; coins with no registered SLIP-44
+coin type have no HD row, because inventing one would produce a path no other wallet reproduces.
 
 | Ticker | Coin | Family | Default address | HD path (`--hd`) |
 |---|---|---|---|---|
@@ -35,8 +37,8 @@ produce a path no other wallet reproduces.
 | `btc` | Bitcoin | SegWit v0 | `bc1q…` | `m/84'/0'` |
 | `ltc` | Litecoin | SegWit v0 | `ltc1q…` | `m/84'/2'` |
 | `vtc` | Vertcoin | SegWit v0 | `vtc1q…` | `m/84'/28'` |
-| `scash` | Scash | SegWit v0 | `sc1q…` | — |
-| `alpha` | Unicity Alpha | SegWit v0 | bech32 | — |
+| `scash` | Scash | SegWit v0 | `bc1q…` | — |
+| `alpha` | Unicity Alpha | SegWit v0 | `alpha1q…` | — |
 | `doge` | Dogecoin | P2PKH | `D…` | `m/44'/3'` |
 | `rvn` | Ravencoin | P2PKH | `R…` | `m/44'/175'` |
 | `firo` | Firo | P2PKH | `a…` | `m/44'/136'` |
@@ -57,9 +59,25 @@ produce a path no other wallet reproduces.
 | `kas` | Kaspa | Kaspa-family | `kaspa:…` | — |
 | `kls` | Karlsen | Kaspa-family | `karlsen:…` | — |
 | `spr` | Spectre | Kaspa-family | `spectre:…` | — |
-| `erg` | Ergo | Ergo P2PK | base58 | — |
-| `alph` | Alephium | Alephium | base58 | — |
-| `xdag` | XDAG | XDAG | base58check | — |
+| `erg` | Ergo | Ergo P2PK | `9…` | — |
+| `alph` | Alephium | Alephium | `1…` | — |
+| `xdag` | XDAG | XDAG | no fixed prefix | — |
+
+Three rows need a word of explanation:
+
+- **`scash`** — `bc1q…` is not a typo. Scash left Bitcoin's base58 and bech32 parameters unchanged,
+  so a Scash address is byte-identical to the Bitcoin address for the same key, and no encoding can
+  tell the two apart. Check which chain you are paying before you paste one.
+- **`xdag`** — an XDAG address is `base58check(HASH160(pubkey))` with **no** version byte, so
+  nothing constrains its leading characters, or even its length: privkey `0000…0001` mints
+  `BgGZ9tcN4rm9KBzDn7KprQz87SZ1k5oUs` (33 characters) and `0000…0002` mints
+  `cMh228HTCiwS8ZsaakH8A8wze1FZeuap` (32). There is no prefix to document, and printing one would be
+  a lie.
+- **`firo`** — `a…` is what version byte `0x52` renders for 98.8% of keys, not for all of them. The
+  other 1.2% fall just below the base58 boundary between `Z` and `a` and render `Z…` instead:
+  `restore 0000…003e --coin firo` mints `ZzzAu2nHnHNxMea5vbLyeD4nejtXDW57wY`. Both forms are
+  ordinary Firo addresses. This is the table's **only** majority-rather-than-guaranteed prefix —
+  every other base58 row's version bytes pin the leading characters for every possible key.
 
 **Testnet.** `--testnet` works where the coin defines one. `--legacy` renders the base58 form for a
 SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
@@ -138,6 +156,15 @@ it for any coin whose address scheme is one of the families above.
 > **A custom token is UNVERIFIED.** No known-answer test covers your parameters, so nothing checks
 > that you read them correctly. The tool prints a warning and you must verify the address before
 > mining to it.
+
+A token sets **bytes, not hashes.** `p2pkh:` always hashes the pubkey with Bitcoin's HASH160 and
+checksums with Bitcoin's SHA256d — right for a Bitcoin-derived chain, wrong for Groestlcoin, whose
+base58check checksum is a double Groestl-512 (`Groestlcoin/groestlcoin`, `src/groestlcoin-hash.cpp`
+and `src/hash.h`). That substitution sits *inside* base58check, below the address layer, so the WIF
+comes out as wrong as the address and no `ver=` repairs either. Decred is not expressible at all: it
+hashes with BLAKE-256 and its address version is two bytes where `ver=` takes one (`decred/dcrd`,
+`dcrutil/hash160.go`, `chaincfg/chainhash/hashfuncs.go`, `chaincfg/mainnetparams.go`). The `segwit:`
+token's `--legacy` form and its WIF inherit the same assumption.
 
 ### Grammar
 
