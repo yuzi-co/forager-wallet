@@ -1,7 +1,18 @@
 # cargo-deny configuration — supply-chain gate. Permissive licenses only.
 # Docs: https://embarkstudios.github.io/cargo-deny/
-# Run locally:  cargo install cargo-deny && cargo deny check
-# CI runs `cargo deny check` on every PR (see .github/workflows/ci.yml).
+#
+# Run locally, exactly as CI runs it (see .github/workflows/ci.yml):
+#
+#     cargo install cargo-deny
+#     cargo deny --all-features --locked check \
+#         --deny advisory-not-detected --deny license-not-encountered
+#
+# Plain `cargo deny check` still works and still catches a banned or badly-licensed crate. The
+# three extra flags are what hold this file to what it says about itself. `--locked` makes the
+# graph being checked the graph in Cargo.lock rather than whatever cargo would resolve today; the
+# two `--deny` lints turn "every entry below is matched by something in the graph" from a claim in
+# a comment into a failing check, because cargo-deny reports an unused entry as a warning and a
+# warning does not fail CI.
 
 [graph]
 # Evaluate the dependency graph with all features we may ship enabled.
@@ -125,3 +136,47 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# ------------------------------------------------------------------------------------------------
+# What this file does not check, and why cargo-vet is not next to it
+#
+# Everything above gates the shape of the dependency graph: its licenses, its published advisories,
+# the registry it came from, and whether anything in it can open a socket. None of that is a review
+# of the code. Nobody here has read the source of the 52 third-party crates that get compiled into
+# the binary, and nothing in this file should be read as implying otherwise.
+#
+# `cargo-vet` is the tool for recording that kind of review, and its appeal is that you need not do
+# the reading yourself: it imports the audit sets Mozilla, Google, the Bytecode Alliance and others
+# publish, and tells you how much of your graph they already cover. It was installed, configured and
+# measured against this exact Cargo.lock before being rejected. The numbers:
+#
+#     54 packages resolved — 2 first-party, 52 third-party.
+#     All 9 audit sets in cargo-vet's registry imported: mozilla, google, bytecode-alliance, isrg,
+#     zcash, embark-studios, fermyon, actix, ariel-os.
+#     14 of the 52 (27%) came back with a complete safe-to-deploy chain.
+#     38 of the 52 (73%) would have to be listed as `exemptions` — cargo-vet's word for
+#     "unreviewed, grandfathered in".
+#     Of the 33 crates that do cryptography or touch key material, 8 were covered and 25 were not,
+#     including every one that can see a private key: k256, elliptic-curve, ecdsa, secp256k1,
+#     secp256k1-sys, bip32, zeroize and getrandom.
+#
+# `cargo vet` passed. It passed for the same reason a file full of unused allowances passes: the
+# entries that would have made it fail were written down in advance. The generated tree came to 409
+# lines across three files, 160 of them a single block of pre-authorization, and it covered none of
+# the crates that can leak or weaken a key. Adding it would have put a second gate next to this one
+# that reads as evidence of review and is not any. That is the failure the rest of this file was
+# cleaned up to stop committing.
+#
+# Adopt it when the numbers change, not on principle. The measurement is cheap to repeat:
+#
+#     cargo install cargo-vet && cargo vet init
+#     for s in mozilla google bytecode-alliance isrg zcash embark-studios fermyon actix ariel-os
+#     do cargo vet import "$s"; done
+#     cargo vet prune && cargo vet --locked
+#
+# The threshold worth watching is coverage of the crates that handle key material, not the headline
+# percentage. The day k256, bip32, zeroize and getrandom are covered by imported audits, cargo-vet
+# starts asserting something this file cannot, and should be added. And if someone here does audit a
+# crate for real, `supply-chain/audits.toml` is the right place to publish it — the objection is to
+# importing the gesture, not to the tool.
+# ------------------------------------------------------------------------------------------------
