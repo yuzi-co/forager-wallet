@@ -25,9 +25,11 @@ Run `forager-wallet list` for the live table — this file documents it, and a t
 
 ## The coin table
 
-`default address` is what `new --coin <ticker>` produces. `HD` is the path `new --hd` uses by
-default; coins with no registered SLIP-44 coin type have no HD row, because inventing one would
-produce a path no other wallet reproduces.
+`Default address` is the leading part of what `new --coin <ticker>` produces; the `…` stands for the
+key-dependent remainder. The column is checked, not asserted: `tests/docs_coverage.rs` mints every
+row from the fixed key `0000…0001` and fails the build if the address does not start with the
+prefix written here. `HD` is the path `new --hd` uses by default; coins with no registered SLIP-44
+coin type have no HD row, because inventing one would produce a path no other wallet reproduces.
 
 | Ticker | Coin | Family | Default address | HD path (`--hd`) |
 |---|---|---|---|---|
@@ -35,8 +37,8 @@ produce a path no other wallet reproduces.
 | `btc` | Bitcoin | SegWit v0 | `bc1q…` | `m/84'/0'` |
 | `ltc` | Litecoin | SegWit v0 | `ltc1q…` | `m/84'/2'` |
 | `vtc` | Vertcoin | SegWit v0 | `vtc1q…` | `m/84'/28'` |
-| `scash` | Scash | SegWit v0 | `sc1q…` | — |
-| `alpha` | Unicity Alpha | SegWit v0 | bech32 | — |
+| `scash` | Scash | SegWit v0 | `bc1q…` | — |
+| `alpha` | Unicity Alpha | SegWit v0 | `alpha1q…` | — |
 | `doge` | Dogecoin | P2PKH | `D…` | `m/44'/3'` |
 | `rvn` | Ravencoin | P2PKH | `R…` | `m/44'/175'` |
 | `firo` | Firo | P2PKH | `a…` | `m/44'/136'` |
@@ -57,9 +59,23 @@ produce a path no other wallet reproduces.
 | `kas` | Kaspa | Kaspa-family | `kaspa:…` | — |
 | `kls` | Karlsen | Kaspa-family | `karlsen:…` | — |
 | `spr` | Spectre | Kaspa-family | `spectre:…` | — |
-| `erg` | Ergo | Ergo P2PK | base58 | — |
-| `alph` | Alephium | Alephium | base58 | — |
-| `xdag` | XDAG | XDAG | base58check | — |
+| `erg` | Ergo | Ergo P2PK | `9…` | — |
+| `alph` | Alephium | Alephium | `1…` | — |
+| `xdag` | XDAG | XDAG | no fixed prefix | — |
+
+Three rows need a word of explanation:
+
+- **`scash`** — `bc1q…` is not a typo. Scash left Bitcoin's base58 and bech32 parameters unchanged,
+  so a Scash address is byte-identical to the Bitcoin address for the same key, and no encoding can
+  tell the two apart. Check which chain you are paying before you paste one.
+- **`xdag`** — an XDAG address is `base58check(HASH160(pubkey))` with **no** version byte, so
+  nothing constrains its leading characters, or even its length: privkey `0000…0001` mints
+  `BgGZ9tcN4rm9KBzDn7KprQz87SZ1k5oUs` (33 characters) and `0000…0002` mints
+  `cMh228HTCiwS8ZsaakH8A8wze1FZeuap` (32). There is no prefix to document, and printing one would be
+  a lie.
+- **`firo`** — `a…` is what version byte `0x52` renders for all but roughly 1.2% of keys. The
+  remainder land just below the base58 digit boundary and render `Z…` instead; both are ordinary
+  Firo addresses.
 
 **Testnet.** `--testnet` works where the coin defines one. `--legacy` renders the base58 form for a
 SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
