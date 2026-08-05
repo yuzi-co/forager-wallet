@@ -15,12 +15,14 @@
 //! local clean-room implementation.
 //!
 //! ## HD (BIP39/BIP44) mode
-//! The opt-in [`hd`] module adds standard hierarchical-deterministic keygen (24-word BIP39
-//! mnemonic → BIP44 `m/44'/coin'/account'/0/index` → transparent P2PKH address + WIF) for the
+//! The opt-in [`hd`] module adds standard hierarchical-deterministic keygen (BIP39 mnemonic →
+//! BIP44 `m/44'/coin'/account'/0/index` → transparent P2PKH address + WIF) for the
 //! Bitcoin/Zcash-family base58 coins, so the printed address is exactly what a standard BIP44
 //! wallet reproduces from the same phrase.  It is *additive* — the single-key API above is
-//! unchanged.  HD derivation is delegated to the well-audited `bip32` crate (BIP39 + BIP32 on the
-//! pure-Rust `k256` backend); this crate's own curve stays the single-key authority.
+//! unchanged.  A phrase this crate *mints* is 24 words (256-bit entropy); a phrase it *accepts*
+//! may be any length BIP39 defines (12/15/18/21/24).  The mnemonic↔seed half is this crate's own
+//! clean-room [`bip39`]; BIP32 CKDpriv is delegated to the well-audited `bip32` crate (pure-Rust
+//! `k256` backend); and this crate's own curve stays the single-key authority.
 //!
 //! ## Back-compat Pearl API
 //! The original Pearl-only helpers ([`address_from_privkey`], [`address_from_hex`],
