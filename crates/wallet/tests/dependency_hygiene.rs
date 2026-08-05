@@ -51,6 +51,7 @@ const ALLOWED: &[&str] = &[
 ///
 /// Reading the manifest text rather than `cargo metadata` keeps the guard dependency-free — a test
 /// that defends a dependency list should not need a dependency to run.
+///
 /// Two manifest shapes, because `cargo package` does not ship the one that was written. Publishing
 /// rewrites the manifest, normalizing every dependency into its own `[dependencies.<name>]` table,
 /// so a parser that only understands the inline `[dependencies]` form panics on an extracted
