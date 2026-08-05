@@ -1,0 +1,272 @@
+name: release
+
+# What a downloaded binary can and cannot be tied back to this source.
+#
+# Everything else in this repository is aimed at a reader who has the source in front of them:
+# deny.toml gates the graph, the hygiene tests gate the manifests, `--locked` in ci.yml gates the
+# resolution. None of it helps someone who downloaded an executable. This workflow exists to give
+# that person something checkable, and to be precise about how much it checks.
+#
+# WHAT A RELEASE ARTIFACT GUARANTEES
+#
+#   1. Provenance. `actions/attest-build-provenance` signs a SLSA provenance statement binding the
+#      artifact's SHA-256 to this repository, this workflow file, this commit and this run. It is
+#      signed through Sigstore against a short-lived GitHub OIDC identity, so verification does not
+#      depend on a long-lived key anyone here holds. `gh attestation verify <file> --repo
+#      yuzi-co/forager-wallet` fails if the file was not produced by this workflow from this repo.
+#
+#   2. An embedded dependency SBOM. `cargo auditable` compresses the exact resolved dependency
+#      list into a `.dep-v0` linker section of the binary itself, so `cargo audit bin
+#      forager-wallet` scans the shipped executable rather than a lockfile someone hands you. The
+#      list is generated from Cargo.lock at build time, and the build is `--locked`, so it is the
+#      graph deny.toml vetted.
+#
+#   3. Checksums. Each archive ships a `.sha256` next to it, and the archive's digest is also the
+#      subject of the attestation in (1) — so the checksum is not merely self-consistent.
+#
+# WHAT IT DOES NOT GUARANTEE
+#
+#   NOT a reproducible build. You cannot rebuild this source and expect to arrive at the same
+#   bytes, and nothing here should be read as claiming you can. This was measured rather than
+#   assumed: two clean `cargo auditable build --locked --release` runs of this workspace, on one
+#   machine, with one toolchain, one set of flags and the same target-directory path, produced two
+#   different SHA-256 digests. Bit-for-bit reproducibility needs more than a pinned compiler — at
+#   minimum a normalised `SOURCE_DATE_EPOCH`, complete path remapping, and a deterministic linker
+#   on each platform — and until someone does that work and demonstrates a matching rebuild, the
+#   honest statement is that provenance tells you *who built it and from what*, not that you can
+#   independently derive the same bytes.
+#
+#   NOT an audit of the dependency code. See the note at the end of deny.toml: the graph is gated
+#   on licence, advisory, registry and network-capability, and nobody has reviewed the source of
+#   the 52 third-party crates.
+#
+# Actions are pinned to commit SHAs for the reason given at the top of ci.yml.
+
+on:
+  push:
+    tags: ["v*"]
+
+# Default to nothing. Each job below re-grants exactly what it needs, so the compile step — the
+# one that runs third-party build scripts — never holds the token that can write a release.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # The release compiler is pinned, unlike CI's, which floats on stable (see ci.yml for why they
+  # differ). A published artifact should be able to say which rustc produced it as a fact rather
+  # than as "whatever stable was that Tuesday", and the test run below happens on this same pinned
+  # toolchain, so the binary that ships is the binary that was tested.
+  #
+  # There is deliberately no rust-toolchain.toml: cargo includes it in published crates, so it
+  # would impose this exact compiler on every downstream consumer of forager-addr and
+  # forager-wallet and effectively declare an MSRV of this version. Pinning belongs to the release
+  # build, not to the library.
+  RUST_VERSION: "1.97.1"
+  # Pinned for the same reason the actions are: these tools run in the job that produces the
+  # artifact.
+  CARGO_AUDITABLE_VERSION: "0.7.5"
+  RUST_AUDIT_INFO_VERSION: "0.5.4"
+
+jobs:
+  # Create the release up front, as a draft. If any platform in the build matrix fails, the draft
+  # is simply never published, so a half-built release is never visible to anyone.
+  draft:
+    name: draft the release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Create a draft release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; reusing it"
+            exit 0
+          fi
+          cat > notes.md <<'EOF'
+          ## Verifying this download
+
+          Every archive below is covered by a signed SLSA build-provenance attestation and by a
+          SHA-256 checksum, and every binary carries its own dependency list.
+
+          ```sh
+          # 1. This archive was built by this repository's release workflow, from this commit.
+          gh attestation verify forager-wallet-<version>-<target>.tar.gz --repo yuzi-co/forager-wallet
+
+          # 2. The archive is intact.
+          sha256sum -c forager-wallet-<version>-<target>.tar.gz.sha256
+
+          # 3. The dependency list embedded in the binary at build time has no known advisories.
+          cargo install cargo-audit && cargo audit bin forager-wallet
+          ```
+
+          These builds are **not** reproducible bit-for-bit; the attestation records who built the
+          artifact and from what source, not that you can rederive the same bytes. See the header
+          of `.github/workflows/release.yml` for what that does and does not cover.
+          EOF
+          gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file notes.md
+
+  build:
+    name: build / ${{ matrix.target }}
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    permissions:
+      # Uploading the artifacts to the draft release.
+      contents: write
+      # Minting the short-lived Sigstore identity the attestation is signed against.
+      id-token: write
+      # Recording the attestation against this repository.
+      attestations: write
+    strategy:
+      # Every platform's artifact is independent, so one failing target should not hide whether
+      # the others are also broken. The draft stays unpublished either way.
+      fail-fast: false
+      matrix:
+        include:
+          # Each target is built natively on its own runner. Nothing here is cross-compiled: the
+          # graph contains `secp256k1-sys` and `cc`, so a cross build would need a working C
+          # toolchain for the host/target pair, which is a whole category of failure this workflow
+          # does not need to take on.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: forager-wallet
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: forager-wallet
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: forager-wallet.exe
+            archive: zip
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-auditable and rust-audit-info
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-auditable --locked --version "$CARGO_AUDITABLE_VERSION"
+          cargo install rust-audit-info --locked --version "$RUST_AUDIT_INFO_VERSION"
+
+      # The tests run here as well as in ci.yml, on the pinned toolchain rather than on stable, so
+      # that the compiler which produces the shipped binary is the one the known-answer tests
+      # passed under. For an address generator that is not ceremony: a miscompiled or
+      # differently-behaving codec means unspendable funds, and CI's floating stable is by
+      # definition not the compiler used here.
+      - name: Test on the pinned toolchain
+        shell: bash
+        run: cargo test --workspace --locked
+
+      # `cargo auditable` is a wrapper around `cargo`; every argument after it is passed through.
+      #
+      # `--remap-path-prefix` replaces the build directory in whatever paths end up in the binary.
+      # Verified rather than assumed: with the workspace prefix remapped, a grep of the resulting
+      # executable for the build-host path returns 0 hits where the unremapped control build
+      # returns 10. It removes build-host paths; it does not make the build reproducible — see the
+      # header.
+      - name: Build the release binary with an embedded dependency SBOM
+        shell: bash
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/forager-wallet
+        run: cargo auditable build --locked --release --bin forager-wallet --target ${{ matrix.target }}
+
+      # Assert the SBOM is actually in the binary rather than trusting that it is.
+      #
+      # This is not paranoia about cargo-auditable: `[profile.release] strip = true` in the
+      # workspace manifest strips the binary, and "the audit section survives stripping" is a
+      # property of each platform's object format, not a promise. It was confirmed by hand on
+      # Windows/PE with this toolchain; on Linux/ELF and macOS/Mach-O this step is the confirmation.
+      # If a future toolchain or profile change silently drops the section, the release fails here
+      # instead of shipping a binary that claims an SBOM it does not have.
+      - name: Verify the SBOM survived into the shipped binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          rust-audit-info "$BIN" > sbom.json
+          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('sbom.json','utf8')).packages.length)")
+          echo "embedded SBOM lists $COUNT packages"
+          if [ "$COUNT" -lt 2 ]; then
+            echo "::error::embedded dependency SBOM is missing or empty in $BIN" >&2
+            exit 1
+          fi
+
+      - name: Stage the archive contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="forager-wallet-${VERSION}-${{ matrix.target }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "dist/$NAME/"
+          # Apache-2.0 requires the licence and the NOTICE to travel with the binary, and
+          # THIRD-PARTY.md is the human-readable counterpart of the SBOM embedded above.
+          cp LICENSE NOTICE README.md THIRD-PARTY.md "dist/$NAME/"
+
+      - name: Archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: tar -czf "dist/${NAME}.tar.gz" -C dist "$NAME"
+
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/$env:NAME" -DestinationPath "dist/$env:NAME.zip"
+
+      - name: Checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          FILE="${NAME}.${{ matrix.archive }}"
+          # sha256sum on Linux and on the Windows runner's bash; shasum on macOS.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$FILE" > "$FILE.sha256"
+          else
+            shasum -a 256 "$FILE" > "$FILE.sha256"
+          fi
+          cat "$FILE.sha256"
+
+      # Attest the archive, which is the thing a person downloads. The binary inside it is covered
+      # transitively: the archive's digest is signed, and the checksum file lets you confirm you
+      # have that archive.
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/${{ env.NAME }}.${{ matrix.archive }}
+
+      - name: Upload to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "dist/${NAME}.${{ matrix.archive }}" "dist/${NAME}.${{ matrix.archive }}.sha256" --clobber
+
+  publish:
+    name: publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Reached only if every platform built, tested, carried a verified SBOM and was attested.
+      - name: Undraft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

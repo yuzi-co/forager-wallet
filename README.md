@@ -41,6 +41,37 @@ confirm the no-network claim by reading `Cargo.toml`, without reading a line of 
 
 Private keys and seeds are zeroed on drop. Both crates are `#![forbid(unsafe_code)]`.
 
+## If you downloaded a binary
+
+Everything above is checkable by someone holding the source. A downloaded executable needs its own
+evidence, so each release artifact carries three things:
+
+```sh
+# 1. This archive was built by this repository's release workflow, from a commit in this repository.
+gh attestation verify forager-wallet-<version>-<target>.tar.gz --repo yuzi-co/forager-wallet
+
+# 2. The archive is the one that was signed.
+sha256sum -c forager-wallet-<version>-<target>.tar.gz.sha256
+
+# 3. The dependency list embedded in the binary at build time carries no known advisories.
+cargo install cargo-audit && cargo audit bin forager-wallet
+```
+
+Step 3 works because the binary is built with [`cargo auditable`][auditable], which writes the
+resolved dependency graph into the executable itself — so you are auditing the thing you have, not a
+lockfile someone hands you alongside it.
+
+**These builds are not reproducible bit-for-bit, and the attestation does not claim they are.** It
+records who built the artifact and from which source; it does not let you rebuild and compare bytes.
+Two clean release builds of this workspace on one machine, one toolchain and one set of flags
+produce two different digests. See the header of
+[`.github/workflows/release.yml`](.github/workflows/release.yml) for the full statement of what is
+and is not covered.
+
+Building from source with `cargo install forager-wallet` needs none of this.
+
+[auditable]: https://github.com/rust-secure-code/cargo-auditable
+
 ## The two crates
 
 | Crate | What it does |

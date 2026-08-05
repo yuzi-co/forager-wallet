@@ -1,9 +1,28 @@
 name: CI
 
+# Every third-party action referenced below is pinned to a full commit SHA rather than to a tag.
+#
+# A tag is a mutable pointer. Whoever controls the upstream repository can move `@v2` onto new
+# code at any time, and every workflow that trusts that tag executes it on the next run — inside
+# the same job that compiles and tests this wallet. For a repository whose claim is that you can
+# audit exactly what you are linking, trusting a mutable pointer to supply that job's code is the
+# largest hole left in this file. A SHA cannot be repointed.
+#
+# The trailing `# vX.Y.Z` on each line is for the human reading this, not for the runner; the
+# runner resolves only the SHA. To bump one, resolve the tag you want to its commit
+# (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`) and update the SHA and the comment in
+# the same edit. A comment that no longer describes its SHA is worse than no comment at all.
+
 on:
   push:
     branches: [main]
   pull_request:
+
+# Nothing in this workflow writes to the repository, so it asks for nothing that could. Release
+# publishing needs `contents: write` and two more scopes besides; it lives in release.yml, which
+# grants them per job rather than to everything that runs here.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,31 +37,76 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Pinned to the `v1` tag's commit rather than to the head of someone else's `stable` branch.
+      # At this commit the action supplies no default toolchain, so the channel is stated here, in
+      # this file, instead of being implied by which branch we happened to reference.
+      #
+      # CI floats on `stable` on purpose. The clippy lint wall in both crate manifests is
+      # machinery, and machinery only keeps working if new lints reach it; pinning an exact rustc
+      # here would freeze that wall at whatever it caught the day it was pinned. Releases want the
+      # opposite property and get it — see release.yml, which pins an exact compiler so that the
+      # rustc which produced a published artifact is a recorded fact rather than a date.
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # `--locked` on every command below that accepts it.
+      #
+      # Without it cargo may re-resolve the graph and build something other than what Cargo.lock
+      # records. The consequence is not theoretical for this repository: the thing CI tested would
+      # then not be the thing in the tree, and the graph `cargo deny check` vets in the other job
+      # would not be the graph that got compiled — so the ban list, the licence allowlist and the
+      # advisory check would all be describing a build nobody shipped. Cargo.lock is committed (a
+      # workspace that ships a binary should commit its lockfile), which is what makes `--locked`
+      # enforceable here rather than merely polite: it turns "the lockfile is current" from an
+      # assumption into a build failure.
 
       - name: Format
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       # The known-answer tests are the point of this crate: a wrong address scheme
       # means unspendable funds.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Binary smoke test
-        run: cargo run --bin forager-wallet -- list
+        run: cargo run --locked --bin forager-wallet -- list
 
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # `arguments` are cargo-deny's global options, which precede the subcommand;
+      # `command-arguments` follow `check`. That split is dictated by the argv the action builds
+      # — see its action.yml — and getting it backwards silently drops the flags.
+      #
+      # `--locked` matters as much here as in the test job. cargo-deny resolves the graph through
+      # cargo, so without it the licences, bans and advisories being checked could belong to a
+      # graph nobody is going to build.
+      #
+      # The two `--deny` lints are the gate on the gate, and they are the enforcement half of what
+      # deny.toml now says about itself. That file's comments claim every allowlist line is
+      # matched by something actually in the graph, on the argument that an unused entry is a
+      # pre-authorized slot a future dependency clears without anyone deciding anything. cargo-deny
+      # already detects exactly that — `advisory-not-detected` for a dead `[advisories] ignore`
+      # entry, `license-not-encountered` for an unused `[licenses] allow` entry — but reports both
+      # as warnings, and a warning does not fail CI. Promoting them to errors is what makes the
+      # claim a fact. This repository has been here once already: four unmatched allowances rode in
+      # from the monorepo this was extracted out of and sat in the file for as long as nothing was
+      # obliged to notice them.
+      #
+      # `license-not-encountered` is not a complete check on its own — an entry can be unnecessary
+      # without being unmatched, as `Apache-2.0 WITH LLVM-exception` was, since another allowed
+      # entry already satisfied the same expression. It catches the common case, not every case.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
+          arguments: --all-features --locked
+          command-arguments: --deny advisory-not-detected --deny license-not-encountered
