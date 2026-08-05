@@ -28,6 +28,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bip39;
 pub mod cli;
 mod curves;
 mod families;
@@ -37,6 +38,10 @@ mod keccak;
 mod mnemonic;
 mod ripemd160;
 mod secret;
+// Two word lists, deliberately named so they cannot be confused: `wordlist_en` is Monero's
+// 1626-word CryptoNote list (used by `mnemonic`), `wordlist_bip39_en` is the BIP-39 2048-word
+// list (used by `bip39`). They share a language and nothing else.
+mod wordlist_bip39_en;
 mod wordlist_en;
 
 // Address classification and the coin table live in the `wallet-addr` crate, which deliberately

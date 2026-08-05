@@ -6,17 +6,28 @@
 //!   - `ripemd` crate (RIPEMD-160 compression)
 //!   - `bs58` crate (base58check encoding)
 //!   - Monero / CryptoNote C++ reference (spend/view key derivation, mnemonic)
-//!   - `bip39` crate (BIP39 mnemonic — not used; guard against accidental inclusion)
+//!   - `bip39` crate (BIP-39 mnemonic — not used; `src/bip39.rs` is written from the spec text,
+//!     and this guard is what keeps that claim honest)
 //!
-//! The English word-list (`wordlist_en.rs`) is DATA (1626 dictionary words), not code —
-//! it is excluded from the identifier scan to avoid false positives on legitimate words
-//! that happen to appear in any of the above codebases.
+//! The two word-list files are DATA, not code, and are excluded from the identifier scan to avoid
+//! false positives on legitimate dictionary words that happen to appear in any of the above
+//! codebases:
+//!   - `wordlist_en.rs` — Monero's 1626-word CryptoNote list
+//!   - `wordlist_bip39_en.rs` — the official BIP-39 English 2048-word list
+//!
+//! Both are vendored verbatim from their published sources *because* they are data: the word
+//! order is consensus-critical and cannot be independently derived, so "clean-room" has no meaning
+//! for them. What the guard does police is the surrounding code — in particular the BIP-39
+//! implementation in `src/bip39.rs`, which is written from the specification text and must not
+//! borrow the `bip39` crate's API vocabulary (see the tainted entries at the end of the list).
 
 use std::fs;
 use std::path::Path;
 
-/// Recursively collect all `.rs` source text under `src/`, skipping `wordlist_en.rs`
-/// (pure data — 1626 English words; legitimate dictionary words must not trip the guard).
+/// The pure-data files excluded from the identifier scan. See the module docs.
+const WORDLIST_FILES: &[&str] = &["wordlist_en.rs", "wordlist_bip39_en.rs"];
+
+/// Recursively collect all `.rs` source text under `src/`, skipping the word-list data files.
 fn read_src_excluding_wordlist() -> String {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut out = String::new();
@@ -31,8 +42,8 @@ fn collect_rs(dir: &Path, out: &mut String) {
             collect_rs(&p, out);
         } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "wordlist_en.rs" {
-                continue; // skip the word-list data file
+            if WORDLIST_FILES.contains(&name) {
+                continue; // skip the word-list data files
             }
             out.push_str(&fs::read_to_string(&p).unwrap());
         }
