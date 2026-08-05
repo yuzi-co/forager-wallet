@@ -224,4 +224,69 @@ mod tests {
             "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
         );
     }
+
+    /// Messages long enough to need more than one permutation.
+    ///
+    /// Keccak-256's rate is 136 bytes: a message of 135 bytes or fewer is absorbed in a single
+    /// block, so the whole loop that XORs a second block into the state and permutes again never
+    /// runs. Every Keccak-256 vector this crate could otherwise cite is short — the empty string,
+    /// `"abc"` — and so is every input the crate actually hashes in production (an EIP-55 body is
+    /// 40 bytes, a CryptoNote checksum preimage 65 or 66). The multi-block path was therefore
+    /// carried by no test at all, which is precisely the code a reader would want pinned, since a
+    /// bug there cannot be caught by any address this repository mints.
+    ///
+    /// **Provenance, stated plainly, because it is weaker than the vectors above.** The Keccak team
+    /// published `ShortMsgKAT` files for original Keccak, but they are no longer present in XKCP,
+    /// and the digests below are not quotations from a specification. They were produced by a
+    /// Keccak-256 written independently of this one, for this purpose, and corroborated in two
+    /// directions before being written down:
+    ///
+    /// 1. Its permutation and sponge reproduce **all 256 byte-aligned vectors** of the official
+    ///    XKCP `ShortMsgKAT_SHA3-256.txt`, **120 of which are 136 bytes or longer** — so the
+    ///    multi-block absorb being pinned here is itself validated against an official source, up
+    ///    to the 255-byte ceiling of that file.
+    /// 2. Changing only the padding byte from FIPS-202's `0x06` to original Keccak's `0x01` — the
+    ///    sole difference between the two functions — makes it reproduce both published Keccak-256
+    ///    digests asserted above.
+    ///
+    /// So these are corroborated by an independent implementation, not published by the Keccak
+    /// team for Keccak-256. That is a real difference in strength and the reason it is written
+    /// here. If a published multi-block Keccak-256 KAT becomes available, prefer it to these.
+    ///
+    /// If this test ever fails, the vectors are not the thing to adjust.
+    #[test]
+    fn keccak256_absorbs_messages_longer_than_one_block() {
+        /// `0x00, 0x01, … 0xff, 0x00, …` — an input whose every byte differs from its neighbours,
+        /// so a block boundary handled off by one changes the digest.
+        fn counting_bytes(n: usize) -> Vec<u8> {
+            (0..n).map(|i| (i % 256) as u8).collect()
+        }
+
+        // 135 bytes: one byte under the rate, so still a single permutation. The control — it
+        // proves the two-block cases below differ because of the extra block and not because the
+        // function is broken for long input generally.
+        assert_eq!(
+            hexbytes::encode(&keccak256(&counting_bytes(135))),
+            "cbdfd9dee5faad3818d6b06f95a219fd290b0e1706f6a82e5a595b9ce9faca62"
+        );
+        // 136 bytes: the message fills the first block exactly, so the padding has nowhere to go
+        // and forces a whole second block of its own. The case an implementation gets wrong by
+        // padding in place.
+        assert_eq!(
+            hexbytes::encode(&keccak256(&counting_bytes(136))),
+            "7ce759f1ab7f9ce437719970c26b0a66ff11fe3e38e17df89cf5d29c7d7f807e"
+        );
+        // 137 bytes: one byte into the second block.
+        assert_eq!(
+            hexbytes::encode(&keccak256(&counting_bytes(137))),
+            "ac73d4fae68b8453f764007c1a20ce95994187861f0c3227a3a8e99a73a3b1db"
+        );
+        // 272 bytes: two full blocks, so a third permutation for the padding. This one reaches
+        // past the 255-byte ceiling of the SHA3-256 KAT that anchors the oracle, so it rests on
+        // the same absorb loop being iterated once more rather than on an official vector.
+        assert_eq!(
+            hexbytes::encode(&keccak256(&counting_bytes(272))),
+            "fdf2ec49e749960d3c8521a0219af8d03e30e2b3bf19bd16150ee0eaf133d66e"
+        );
+    }
 }
