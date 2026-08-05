@@ -15,14 +15,30 @@
 //!   - the `tiny-keccak` entries, for a permutation that was written here and then moved down into
 //!     `forager-addr`'s `src/hash.rs` when detection grew a use for it.
 //!
+//! A third group was considered for this list and deliberately never added, for the same reason.
+//! `forager-addr`'s guard grew entries for bech32/bech32m (the `bech32` crate, Bitcoin Core's
+//! `src/bech32.cpp`, Wuille's reference C) and for the cashaddr family (Bitcoin ABC's
+//! `src/cashaddr.cpp`, `kaspanet/rusty-kaspa`), and none of them are mirrored here. This crate
+//! writes bech32 and Kaspa addresses — `src/families/segwitv0.rs`, `src/hd.rs` and `src/lib.rs` all
+//! call `codec::bech32::encode` and `codec::cashaddr::encode` — but it does not *implement* either:
+//! `src/lib.rs` line 53 is `pub(crate) use forager_addr::{codec, hexbytes};`, so every one of those
+//! call sites resolves into the other crate's `src/codec/`, which this scan never reads. Copying
+//! the entries here would produce exactly the dead list this split was made to end.
+//!
+//! That is not the case for `cn_fast_hash` and `GetCheckSum`, which are in both lists: this crate
+//! really does hold CryptoNote checksum code of its own. The test is always "could this tree
+//! contain the name", never "does this tree use the feature".
+//!
 //! Both groups now live in `crates/addr/tests/source_hygiene.rs`, next to the code they describe,
 //! where they can match something. They were not copied into both lists: an entry naming code the
 //! scanned tree could never hold reads as coverage and is not, which is the same objection this
 //! repository makes to an unused entry in a dependency allow-list. The one pair that *is* in both
 //! lists — `cn_fast_hash` and `GetCheckSum` — is marked below, with the reason.
 //!
-//! If a Keccak or base58 implementation ever comes back into `crates/wallet/src/`, the matching
-//! entries have to come back with it; nothing automated will notice that this list went quiet.
+//! If a Keccak, base58, bech32 or cashaddr implementation ever comes into `crates/wallet/src/`, the
+//! matching entries have to come with it; nothing automated will notice that this list went quiet.
+//! The `pub(crate) use forager_addr::codec` re-export is the only thing keeping those three groups
+//! out of this file, and a re-export is one line away from becoming a local module.
 //!
 //! The reason each crate guards its own tree, rather than one test walking both, is packaging:
 //! `tests/` ships inside the published tarball (`cargo package --list -p forager-wallet` lists this
@@ -257,5 +273,25 @@ fn the_scan_detects_a_planted_identifier() {
     assert!(
         clean_hits.is_empty(),
         "the scan flagged this crate's own clean-room names: {clean_hits:?}"
+    );
+
+    // This crate calls the address codecs it does not implement, so its source is full of their
+    // vocabulary — `bech32`, `hrp`, `witver`, `cashaddr` all appear in `src/`. None of it may
+    // become an entry here. The module docs give the reason (the codecs live in `forager-addr`);
+    // this makes the consequence testable, so that a future edit which copies the sibling list
+    // across wholesale fails here, on a line that says why, instead of failing as a mystery.
+    let borrowed_vocabulary = "
+        use crate::{codec::bech32, codec::cashaddr};
+        fn address(hrp: &str, prefix: &str, program: &[u8]) -> (String, String) {
+            // 3-char HRP + '1' + witver(1) + 52 + 6 checksum.
+            (bech32::encode(hrp, 1, program), cashaddr::encode(prefix, 0, program))
+        }
+    ";
+    let borrowed_hits = tainted_identifiers_in(borrowed_vocabulary);
+    assert!(
+        borrowed_hits.is_empty(),
+        "the scan flagged codec vocabulary this crate only *calls*: {borrowed_hits:?} — those \
+         entries belong in `crates/addr/tests/source_hygiene.rs`, which scans the tree that \
+         actually implements them"
     );
 }
