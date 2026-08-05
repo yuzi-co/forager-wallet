@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["crates/addr", "crates/wallet"]
+# `fuzz` is a cargo-fuzz harness: it declares its own `[workspace]`, needs a nightly toolchain and a
+# `panic = "abort"` sanitizer build, and must not be pulled into `cargo test --workspace`. Excluding
+# it here is the other half of that split — without it, cargo walks into `fuzz/` and errors on the
+# nested workspace.
+exclude = ["fuzz"]
 
 # Shared across both crates so the base58check checksum and the address codecs cannot drift onto
 # different SHA-2 implementations.

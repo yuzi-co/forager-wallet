@@ -24,9 +24,11 @@ No key material, no entropy source, no curve arithmetic, no mnemonic wordlist. C
 decodes and checksums — it never touches a private key.
 
 That is enforced, not merely intended: `tests/hygiene.rs` asserts the external dependency list is
-exactly `sha2`, `num-bigint` and `num-traits`. `sha2` computes base58check checksums; the two
-arithmetic crates do base58's decode, whose alphabet is not a power of two. The test fails the
-build if a curve, entropy or mnemonic crate is ever added.
+exactly `sha2`, `blake2b_simd`, `num-bigint` and `num-traits`. The two hash crates compute the
+address checksums — `sha2` for base58check, `blake2b_simd` for Ergo — and the two arithmetic crates
+do base58's decode, whose alphabet is not a power of two. The test fails the build if a curve,
+entropy or mnemonic crate is ever added, and equally if an entry stops being used, so the list
+cannot become a set of pre-authorized slots.
 
 The crate is `#![forbid(unsafe_code)]`.
 

@@ -54,6 +54,38 @@ pub fn convertbits_8_to_5(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Convert 5-bit groups back to 8-bit bytes — the inverse of [`convertbits_8_to_5`].
+///
+/// `None` unless the trailing padding is exactly what the forward direction produces: fewer than
+/// five leftover bits (five or more would mean a whole group carrying no data at all) and every one
+/// of them zero. Sloppy padding is not harmless here — accepting it would give the same bytes two
+/// or more spellings, i.e. a second "valid" way to write one address, so this rejects rather than
+/// truncating. Same rule as BIP173's reference `convertbits` with `pad = false`.
+///
+/// Shared with [`crate::codec::cashaddr`], which needs it to recover the payload behind a verified
+/// Kaspa-family checksum.
+pub fn convertbits_5_to_8(data: &[u8]) -> Option<Vec<u8>> {
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    let mut out = Vec::with_capacity(data.len() * 5 / 8);
+    for &v in data {
+        if v > 31 {
+            return None;
+        }
+        acc = (acc << 5) | u32::from(v);
+        bits += 5;
+        while bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xff) as u8);
+        }
+    }
+    // What is left in `acc` is the padding: at most four bits, every one of them zero.
+    if bits >= 5 || acc & ((1u32 << bits) - 1) != 0 {
+        return None;
+    }
+    Some(out)
+}
+
 /// Which bech32 checksum constant a string satisfied — selects SegWit v0 vs v1+ (Taproot).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
@@ -125,6 +157,38 @@ pub fn encode(hrp: &str, witver: u8, program: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use crate::hexbytes::{decode, hex32};
+
+    /// The two conversions must be exact inverses for every byte length the address schemes use —
+    /// 20 (HASH160), 32 (x-only key / script hash), 33 (compressed key), and the off-by-one
+    /// neighbours that exercise each possible pad width (0-4 bits).
+    #[test]
+    fn convertbits_round_trips_every_relevant_length() {
+        for n in [0usize, 1, 2, 3, 4, 5, 19, 20, 21, 31, 32, 33, 34] {
+            // A pattern, not zeros: all-zero input round-trips even through a broken shift.
+            let bytes: Vec<u8> = (0..n)
+                .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+                .collect();
+            let five = super::convertbits_8_to_5(&bytes);
+            assert_eq!(
+                super::convertbits_5_to_8(&five),
+                Some(bytes),
+                "round trip failed for {n} bytes"
+            );
+        }
+    }
+
+    /// Padding is the part a decoder is tempted to wave through. Both failure modes have to be
+    /// rejected, because either one gives some byte string a second spelling.
+    #[test]
+    fn convertbits_5_to_8_rejects_bad_padding() {
+        // Non-zero pad bits: 2 groups = 10 bits = 1 byte + 2 pad bits, and here they are not zero.
+        assert_eq!(super::convertbits_5_to_8(&[0, 1]), None);
+        // A pad five bits wide: 3 groups = 15 bits = 1 byte + 7 left over, so the last group
+        // carries no data at all and should never have been emitted.
+        assert_eq!(super::convertbits_5_to_8(&[0, 0, 0]), None);
+        // A group outside the 5-bit range cannot have come from the charset.
+        assert_eq!(super::convertbits_5_to_8(&[32]), None);
+    }
 
     #[test]
     fn bip173_segwit_v0_vector() {

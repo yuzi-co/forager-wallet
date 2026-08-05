@@ -5,9 +5,9 @@
 //! classify is reported as [`validate::Verdict::Unrecognized`] rather than rejected.
 //!
 //! This crate holds no key material, no entropy source and no curve arithmetic. Key generation
-//! lives in the separate `forager-wallet` crate. Its external dependencies are `sha2`, for the
-//! base58check checksum, and `num-bigint`/`num-traits`, for base58's non-power-of-two decode;
-//! `tests/hygiene.rs` enforces that list. See
+//! lives in the separate `forager-wallet` crate. Its external dependencies are `sha2` and
+//! `blake2b_simd`, for the base58check and Ergo address checksums, and `num-bigint`/`num-traits`,
+//! for base58's non-power-of-two decode; `tests/hygiene.rs` enforces that list. See
 //! `the repository README`.
 
 #![forbid(unsafe_code)]

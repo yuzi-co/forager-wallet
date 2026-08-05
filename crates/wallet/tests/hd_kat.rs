@@ -5,7 +5,8 @@
 //! BIP32 CKDpriv, secp256k1, and base58check) that was itself validated against two canonical,
 //! published vectors before it was trusted: (a) the BIP39 seed for the 24-word all-zero-entropy
 //! mnemonic + passphrase `"TREZOR"`, taken verbatim from the official `trezor/python-mnemonic`
-//! `vectors.json` and re-asserted here directly via `bip32::Mnemonic::to_seed`; and (b) BIP32
+//! `vectors.json` and re-asserted here directly, through both this crate's `bip39` and
+//! `bip32::Mnemonic::to_seed`, which must agree; and (b) BIP32
 //! test-vector 1 (seed `000102…0f` → master key/chain code).
 //!
 //! Version bytes come from each coin's `chainparams.cpp` (`base58Prefixes[PUBKEY_ADDRESS]` /
@@ -13,35 +14,54 @@
 //! routes through the `bip32` crate) is a third, independent stack; agreement across all three
 //! anchors the values.
 //!
-//! Anchor (b) used to be an *out-of-band* claim — the oracle had been checked against BIP32 vector
-//! 1 during development, but nothing in the repository re-asserted it.  It is now asserted here,
-//! together with vectors 2, 3 and 4, so the claim the rest of this file leans on is checked by
-//! `cargo test` rather than by a comment.  See `bip32_official_test_vectors` below for exactly what
-//! that does and does not prove, and for why vector 5 is *not* asserted (see the section comment
-//! above `bip32_vector_1_reproduces_the_published_extended_keys`).
+//! Anchor (b) was, until now, an *out-of-band* claim: the oracle had been checked against BIP32
+//! vector 1 during development, but nothing in the repository re-asserted it, so the only anchor
+//! `cargo test` actually enforced was (a).  It is asserted here now, together with vectors 2, 3 and
+//! 4.  The section comment above `bip32_vector_1_reproduces_the_published_extended_keys` says
+//! exactly what those pin, what they do not, and why vector 5 is deliberately not asserted.
 //!
-//! `bip32::Mnemonic` is 24-word (256-bit) only, so the canonical test mnemonic here is the 24-word
-//! all-zero-entropy vector (`abandon` ×23 + `art`), not the shorter 12-word form.
+//! Every per-coin vector below uses the 24-word all-zero-entropy mnemonic (`abandon` ×23 + `art`).
+//! They were written when the mnemonic→seed step was delegated to `bip32`, which parses 256-bit
+//! phrases only, and they are **unchanged** — these are addresses users may already hold, so the
+//! clean-room BIP39 swap had to move exactly none of them.
+//!
+//! What the swap *added* is the second half of this file: the BIP84 and BIP86 test vectors, which
+//! the BIP texts publish against the **12-word** mnemonic and which therefore could never be
+//! asserted here before. Those come straight from `bitcoin/bips` — `bip-0084.mediawiki` and
+//! `bip-0086.mediawiki`, "Test vectors" section — which makes them the strongest anchors in the
+//! file: not this crate's output, not the oracle's, but the specification's own.
 
-use forager_wallet::hd;
+use forager_wallet::{bip39, hd};
 
 /// Canonical BIP39 24-word all-zero-entropy mnemonic (`abandon` ×23 + `art`).
 const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+/// The 12-word all-zero-entropy mnemonic (`abandon` ×11 + `about`) — the phrase BIP84 and BIP86
+/// publish their test vectors against, and the length `bip32::Mnemonic` rejects outright.
+const ABANDON_12: &str =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Anchor #1: the mnemonic->seed step reproduces the official Trezor BIP39 vector.
+///
+/// Asserted through `forager_wallet::bip39` — the implementation `hd::derive` actually calls —
+/// and then cross-checked against `bip32`'s, which is what the per-coin constants below were
+/// originally produced under. Both must equal the published seed; if they ever diverge, every
+/// address in this file has silently moved.
 #[test]
 fn bip39_canonical_seed_vector() {
-    let mnemonic = bip32::Mnemonic::new(ABANDON, Default::default()).unwrap();
-    let seed = mnemonic.to_seed("TREZOR");
-    assert_eq!(
-        hex(seed.as_bytes()),
-        "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd309717\
-         0af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8"
-    );
+    const PUBLISHED: &str = "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd309717\
+                             0af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8";
+    let ours = bip39::seed(ABANDON, "TREZOR").expect("the canonical phrase must parse");
+    assert_eq!(hex(ours.as_bytes()), PUBLISHED);
+
+    let theirs = bip32::Mnemonic::new(ABANDON, Default::default())
+        .unwrap()
+        .to_seed("TREZOR");
+    assert_eq!(hex(theirs.as_bytes()), PUBLISHED);
 }
 
 // ---- Anchor #2: the official BIP-32 test vectors ----
@@ -49,16 +69,23 @@ fn bip39_canonical_seed_vector() {
 // Source for every `xprv`/`xpub` literal in this section: bitcoin/bips, `bip-0032.mediawiki`,
 // section "Test Vectors".  Nothing here was computed by this repository or by any oracle it uses.
 //
-// What this section pins, and what it does not.  `hd::derive` delegates master-key generation and
-// CKDpriv to the `bip32` crate (see the "Provenance" section of `hd.rs`), so these vectors exercise
-// exactly the code path every per-coin KAT below runs through — but none of the arithmetic they
-// cover was written here.  They are not a tautology: the expected strings come from the BIP-32
+// What this section pins, and what it does not.  Since the clean-room BIP39 swap, `bip32` is no
+// longer the mnemonic→seed path — it is *only* the BIP32 half: master-key generation and CKDpriv,
+// entered through `bip32::Seed::new` (see the "Provenance" section of `hd.rs`).  That makes this
+// the one delegated step left in HD derivation, and until now nothing in the repository checked it
+// against the specification.  None of the arithmetic these vectors cover was written here, and they
+// are not meant to suggest otherwise; what they are is the anchor for the half of `hd::derive` this
+// crate does not own.  They are also not a tautology: every expected string comes from the BIP-32
 // document, which predates and is independent of both this crate and the `bip32` crate, so the
-// value being checked was not produced by the code doing the checking.  Their job is to keep the
-// delegation honest.  `bip32` ships its own copy of these vectors, but that copy tests `bip32`'s
-// default configuration, not the feature set this workspace selects, and it would vanish the moment
-// the dependency were swapped or vendored — while every per-coin expectation below would silently
-// keep assuming BIP32 derivation is correct.
+// value being checked was not produced by the code doing the checking.  `bip32` ships its own copy
+// of these vectors, but that copy tests `bip32`'s default configuration rather than the feature set
+// this workspace selects, and it would vanish the moment the dependency were swapped or vendored —
+// while every per-coin expectation below would silently keep assuming BIP32 derivation is correct.
+//
+// One deliberate difference from `hd::derive`: the vectors' seeds are 16 and 32 bytes as well as
+// 64, so they are handed to `XPrv::derive_from_path` as raw slices rather than through the 64-byte
+// `bip32::Seed` newtype `hd::derive` uses.  Both reach the same `XPrv::new`; the newtype only
+// carries zeroize-on-drop, which is not a property these public test vectors need.
 //
 // Vectors 3 and 4 are the ones that catch real bugs: both exist because a derived private key can
 // have a leading zero byte, and an implementation that carries keys as big integers rather than
@@ -75,7 +102,8 @@ fn bip39_canonical_seed_vector() {
 // something to reject would be inventing API surface rather than testing it.  If xprv import is
 // ever added, vector 5 is the test to add alongside it.
 
-/// Decode a lowercase hex literal.  Test-local: the crate's own hex decoder is `pub(crate)`.
+/// Decode a lowercase hex string. Local to the test so the KAT does not lean on crate internals —
+/// the same reason `bip39_kat.rs` carries its own copy.
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len())
         .step_by(2)
@@ -609,4 +637,294 @@ fn restore_is_deterministic() {
     let b = hd::derive(ABANDON, "", coin, hd::Purpose::Bip44, 0, 0).unwrap();
     assert_eq!(a.address, b.address);
     assert_eq!(a.secret_str(), b.secret_str());
+}
+
+// ===========================================================================
+// The BIP84 / BIP86 published vectors, from the 12-word mnemonic.
+//
+// Everything above this line predates the clean-room BIP39 and is byte-for-byte unchanged by it.
+// Everything below was impossible before: `bip32::Mnemonic` accepts 256-bit phrases only, and both
+// BIPs publish their vectors against the 128-bit `abandon ×11 about` phrase, so the specification's
+// own answers had never been asserted against this crate.
+//
+// Provenance: `bitcoin/bips`, `bip-0084.mediawiki` and `bip-0086.mediawiki`, "Test vectors".
+// Transcribed from the BIP texts, not from this crate's output and not from the reference oracle.
+// ===========================================================================
+
+/// Derive from the 12-word BIP84/BIP86 mnemonic at `m/<purpose>'/0'/0'/0/<index>` and assert the
+/// address the BIP publishes.
+///
+/// Note the fixed `0` change level: `hd::derive` derives the external (receive) chain only, so the
+/// published *change* vectors — `m/84'/0'/0'/1/0` and `m/86'/0'/0'/1/0` — are not reachable through
+/// the public API and are deliberately not asserted here rather than half-asserted through some
+/// other path. The receive chain is what this tool hands out, and the address_index level is
+/// covered below at both 0 and 1.
+fn check_spec_vector(purpose: hd::Purpose, index: u32, expect_addr: &str) -> String {
+    let btc = hd::lookup("btc").expect("btc is HD-capable");
+    let acct = hd::derive(ABANDON_12, "", btc, purpose, 0, index)
+        .expect("the 12-word spec mnemonic must derive");
+    assert_eq!(
+        acct.path,
+        format!("m/{}'/0'/0'/0/{index}", purpose.number()),
+        "{purpose} index {index} path"
+    );
+    assert_eq!(acct.address, expect_addr, "{purpose} index {index} address");
+    acct.secret_str().to_string()
+}
+
+/// BIP84 `m/84'/0'/0'/0/0` — the first receiving address, with the WIF the BIP publishes for it.
+#[test]
+fn bip84_spec_vector_first_receiving_address() {
+    let wif = check_spec_vector(
+        hd::Purpose::Bip84,
+        0,
+        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu",
+    );
+    assert_eq!(wif, "KyZpNDKnfs94vbrwhJneDi77V6jF64PWPF8x5cdJb8ifgg2DUc9d");
+}
+
+/// BIP84 `m/84'/0'/0'/0/1` — the second receiving address. The address_index level must actually
+/// advance, or a wallet deriving a fresh address per payment would reuse the first one.
+#[test]
+fn bip84_spec_vector_second_receiving_address() {
+    let wif = check_spec_vector(
+        hd::Purpose::Bip84,
+        1,
+        "bc1qnjg0jd8228aq7egyzacy8cys3knf9xvrerkf9g",
+    );
+    assert_eq!(wif, "Kxpf5b8p3qX56DKEe5NqWbNUP9MnqoRFzZwHRtsFqhzuvUJsYZCy");
+}
+
+/// BIP86 `m/86'/0'/0'/0/0` — **and the loop this closes.**
+///
+/// `src/lib.rs` already pins `BIP86_ADDRESS` as
+/// `bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr`, but it gets there from the
+/// BIP's published `internal_key` hex, hardcoded: it proves the Taproot tweak and the bech32m
+/// encoder, and nothing before them. The mnemonic → seed → BIP32 path → x-only key → tweak →
+/// bech32m chain had never been exercised end to end in this repo, because its published starting
+/// point is a 12-word phrase the code could not parse.
+///
+/// This test starts from that phrase and arrives at the same string. Reproducing it means the
+/// clean-room BIP39, the `bip32` CKDpriv derivation, the Taproot tweak and the bech32m encoder all
+/// agree with the specification *and with each other* — four independently sourced pieces meeting
+/// at one 62-character answer that no one of them could have faked.
+#[test]
+fn bip86_spec_vector_first_receiving_address_closes_the_loop() {
+    check_spec_vector(
+        hd::Purpose::Bip86,
+        0,
+        "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+    );
+}
+
+/// BIP86 `m/86'/0'/0'/0/1` — the second receiving address.
+///
+/// The BIP publishes no WIF for its Taproot rows (it gives `xprv`/`internal_key`/`output_key`), so
+/// only the address is asserted. Asserting a WIF here would mean inventing one.
+#[test]
+fn bip86_spec_vector_second_receiving_address() {
+    check_spec_vector(
+        hd::Purpose::Bip86,
+        1,
+        "bc1p4qhjn9zdvkux4e44uhx8tc55attvtyu358kutcqkudyccelu0was9fqzwh",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Defect 1 — short phrases, at the integration layer.
+// ---------------------------------------------------------------------------
+
+/// **The regression.** A 12-word phrase validates and derives through `hd`.
+///
+/// `bip32 0.5.3`'s `Phrase::new` requires `entropy.len() == KEY_SIZE + 1` with `KEY_SIZE == 32`,
+/// so it rejects every 128-bit phrase — the most common length in circulation — and `hd` then
+/// reported it to the user as "invalid BIP39 mnemonic (check the words, length, and checksum)".
+/// The words, length and checksum were all fine.
+#[test]
+fn twelve_word_mnemonic_validates_and_derives() {
+    assert_eq!(ABANDON_12.split_whitespace().count(), 12);
+    hd::validate_mnemonic(ABANDON_12).expect("a valid 12-word phrase must validate");
+
+    let btc = hd::lookup("btc").unwrap();
+    let acct = hd::derive(ABANDON_12, "", btc, hd::Purpose::Bip84, 0, 0)
+        .expect("a valid 12-word phrase must derive");
+    assert_eq!(acct.address, "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu");
+
+    // Pin the upstream behaviour this works around, so the test keeps explaining itself.
+    assert!(
+        bip32::Mnemonic::new(ABANDON_12, Default::default()).is_err(),
+        "if bip32 ever accepts 12-word phrases, this regression's cause is gone"
+    );
+}
+
+/// The other newly-legal lengths — 15, 18 and 21 words — validate too.
+///
+/// The official `trezor/python-mnemonic` file publishes no 15- or 21-word rows, so there is no
+/// upstream phrase to quote for those two. Rather than invent one, each phrase is *encoded* from
+/// fixed entropy by `bip39::entropy_to_phrase` — the encoder that `tests/bip39_kat.rs` locks
+/// against all 24 official rows — and then fed back through the `hd` boundary this file is about.
+/// What is under test here is that `hd` accepts the length, which is exactly what was broken.
+#[test]
+fn fifteen_eighteen_and_twentyone_word_phrases_validate() {
+    for (i, &entropy_len) in bip39::ENTROPY_LENGTHS.iter().enumerate() {
+        let words = bip39::WORD_COUNTS[i];
+        if !matches!(words, 15 | 18 | 21) {
+            continue; // 12 and 24 have published vectors of their own, asserted elsewhere.
+        }
+        let phrase = bip39::entropy_to_phrase(&vec![0x5a; entropy_len]).expect("legal length");
+        assert_eq!(phrase.split_whitespace().count(), words);
+        hd::validate_mnemonic(&phrase).unwrap_or_else(|e| panic!("{words} words rejected: {e}"));
+
+        // And a length that validates must also derive — accepting a phrase and then failing to
+        // use it would be a worse bug than rejecting it.
+        let btc = hd::lookup("btc").unwrap();
+        hd::derive(&phrase, "", btc, hd::Purpose::Bip84, 0, 0)
+            .unwrap_or_else(|e| panic!("{words} words failed to derive: {e}"));
+    }
+    // The 18-word length also has an official row; assert that one directly, so the coverage does
+    // not rest entirely on this crate's own encoder.
+    const OFFICIAL_18: &str = "gravity machine north sort system female filter attitude volume \
+                               fold club stay feature office ecology stable narrow fog";
+    assert_eq!(OFFICIAL_18.split_whitespace().count(), 18);
+    hd::validate_mnemonic(OFFICIAL_18).expect("an official 18-word row must validate");
+}
+
+// ---------------------------------------------------------------------------
+// Defect 2 — NFKD passphrase normalization, at the integration layer.
+// ---------------------------------------------------------------------------
+
+/// The published non-ASCII passphrase from `bip32JP/bip32JP.github.io`'s `test_JP_BIP39.json`
+/// (`㍍ガバヴァぱばぐゞちぢ十人十色`), in its composed form.
+const NFKD_COMPOSED: &str = "\u{334d}\u{30ac}\u{30d0}\u{30f4}\u{30a1}\u{3071}\u{3070}\u{3050}\u{309e}\u{3061}\u{3062}\u{5341}\u{4eba}\u{5341}\u{8272}";
+
+/// The same passphrase in NFKD normal form: U+334D `㍍` expands to the four katakana `メートル`,
+/// and each voiced kana splits into base + U+3099/U+309A. 78 UTF-8 bytes against the composed
+/// form's 45 — genuinely different byte strings.
+const NFKD_DECOMPOSED: &str = "\u{30e1}\u{30fc}\u{30c8}\u{30eb}\u{30ab}\u{3099}\u{30cf}\u{3099}\u{30a6}\u{3099}\u{30a1}\u{306f}\u{309a}\u{306f}\u{3099}\u{304f}\u{3099}\u{309d}\u{3099}\u{3061}\u{3061}\u{3099}\u{5341}\u{4eba}\u{5341}\u{8272}";
+
+/// **A non-ASCII `--passphrase` now derives the spec address, through `hd::derive`.**
+///
+/// BIP39 §"From mnemonic to seed" requires the PBKDF2 salt to be `"mnemonic" ‖ NFKD(passphrase)`.
+/// `bip32 0.5.3`'s `to_seed` builds it as `format!("mnemonic{}", password).as_bytes()` — raw UTF-8,
+/// no normalization — so a user who typed a non-ASCII passphrase got an address that no other
+/// wallet reproduces, and funds sent there could not be recovered anywhere else.
+///
+/// There is no published vector for "English phrase + Japanese passphrase", so rather than invent
+/// an expected address this asserts the property the spec mandates, using two strings whose
+/// relationship is a fact about Unicode rather than a fact about this crate:
+///
+/// 1. the composed and decomposed forms must derive the **same** address (what NFKD means);
+/// 2. that address must differ from the no-passphrase one (the passphrase reaches the salt at all);
+/// 3. and — the falsifiable half — the *un-normalized* derivation must give a **different** key.
+///    Point 3 is asserted against `bip32`'s own non-normalizing `to_seed` over the 24-word phrase
+///    (the only length it parses), which is precisely the code path that was live before this
+///    change. If normalization were silently dropped again, 1 would fail and 3 would stop failing.
+#[test]
+fn non_ascii_passphrase_is_nfkd_normalized_through_derive() {
+    assert_ne!(NFKD_COMPOSED.as_bytes(), NFKD_DECOMPOSED.as_bytes());
+    assert_eq!(NFKD_COMPOSED.len(), 45);
+    assert_eq!(NFKD_DECOMPOSED.len(), 78);
+
+    let btc = hd::lookup("btc").unwrap();
+    let composed = hd::derive(ABANDON_12, NFKD_COMPOSED, btc, hd::Purpose::Bip84, 0, 0).unwrap();
+    let decomposed =
+        hd::derive(ABANDON_12, NFKD_DECOMPOSED, btc, hd::Purpose::Bip84, 0, 0).unwrap();
+    let plain = hd::derive(ABANDON_12, "", btc, hd::Purpose::Bip84, 0, 0).unwrap();
+
+    assert_eq!(
+        composed.address, decomposed.address,
+        "a passphrase and its NFKD normal form must derive the same address"
+    );
+    assert_eq!(
+        composed.secret_str(),
+        decomposed.secret_str(),
+        "…and the same key, not just the same address"
+    );
+    assert_ne!(
+        composed.address, plain.address,
+        "the passphrase must reach PBKDF2's salt"
+    );
+
+    // Point 3: the old, un-normalized behaviour really does diverge. 24 words, because that is the
+    // only length `bip32` will parse — which is why defect 2 could only ever be shown there.
+    let unnormalized = bip32::Mnemonic::new(ABANDON, Default::default())
+        .expect("bip32 parses 24-word phrases")
+        .to_seed(NFKD_COMPOSED);
+    let normalized = bip39::seed(ABANDON, NFKD_COMPOSED).expect("valid phrase");
+    assert_ne!(
+        hex(unnormalized.as_bytes()),
+        hex(normalized.as_bytes()),
+        "if these agree, the passphrase was not normalized and defect 2 is back"
+    );
+
+    // The corollary that makes this change safe: NFKD is the identity on ASCII, so no ASCII
+    // passphrase moved. The TREZOR-passphrase address is pinned above in
+    // `passphrase_changes_derivation`; re-assert it here as the direct counterpart.
+    let ascii = hd::derive(ABANDON, "TREZOR", btc, hd::Purpose::Bip44, 0, 0).unwrap();
+    assert_eq!(ascii.address, "12Wr5H8qyTZ3XwpwZDJDjdimS1doBoj19u");
+}
+
+// ---------------------------------------------------------------------------
+// Error specificity — the user-facing product of the whole change.
+// ---------------------------------------------------------------------------
+
+/// A 13-word phrase is a word-*count* error that names the count, not a blanket rejection.
+#[test]
+fn thirteen_words_reports_the_word_count() {
+    let phrase = vec!["abandon"; 13].join(" ");
+    assert_eq!(
+        hd::validate_mnemonic(&phrase),
+        Err(hd::HdError::InvalidMnemonic(bip39::Bip39Error::WordCount {
+            found: 13
+        }))
+    );
+
+    let msg = hd::validate_mnemonic(&phrase).unwrap_err().to_string();
+    assert!(msg.contains("13"), "must report the count found: {msg}");
+    for legal in ["12", "15", "18", "21", "24"] {
+        assert!(msg.contains(legal), "must list {legal}: {msg}");
+    }
+
+    // `derive` must surface the identical error — the specificity cannot survive validation only
+    // to be flattened on the path that actually spends the phrase.
+    let btc = hd::lookup("btc").unwrap();
+    assert_eq!(
+        hd::derive(&phrase, "", btc, hd::Purpose::Bip84, 0, 0).unwrap_err(),
+        hd::HdError::InvalidMnemonic(bip39::Bip39Error::WordCount { found: 13 })
+    );
+}
+
+/// One mistyped word out of twelve is named, with its 1-based position.
+///
+/// This is the message that matters most in practice: the user is holding a card with twelve words
+/// on it and needs to know which one to look at. "check the words, length, and checksum" told them
+/// to re-read all twelve.
+#[test]
+fn one_misspelled_word_is_named_with_its_position() {
+    // `abandom` — one letter off `abandon`, in the 6th slot.
+    let phrase = "abandon abandon abandon abandon abandon abandom \
+                  abandon abandon abandon abandon abandon about";
+    let expected = hd::HdError::InvalidMnemonic(bip39::Bip39Error::UnknownWord {
+        word: "abandom".to_string(),
+        position: 6,
+    });
+    assert_eq!(hd::validate_mnemonic(phrase), Err(expected));
+
+    let msg = hd::validate_mnemonic(phrase).unwrap_err().to_string();
+    assert!(msg.contains("abandom"), "must name the word: {msg}");
+    assert!(msg.contains('6'), "must give the position: {msg}");
+
+    // A phrase whose every word is legal but whose checksum fails is a *different*, equally
+    // specific error — not the same message with a different word in it.
+    let bad_checksum = "abandon abandon abandon abandon abandon abandon \
+                        abandon abandon abandon abandon abandon abandon";
+    assert_eq!(
+        hd::validate_mnemonic(bad_checksum),
+        Err(hd::HdError::InvalidMnemonic(bip39::Bip39Error::Checksum))
+    );
+
+    // And the BIP39 cause is reachable through the standard `source` chain, for a caller that
+    // wants to branch on it rather than reformat the string.
+    let err = hd::validate_mnemonic(phrase).unwrap_err();
+    assert!(std::error::Error::source(&err).is_some());
 }

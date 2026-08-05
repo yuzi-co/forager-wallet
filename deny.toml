@@ -10,44 +10,49 @@ all-features = true
 [advisories]
 version = 2
 # RustSec advisory DB: fail on vulnerabilities and unmaintained crates.
-# To temporarily accept a known issue, add its ID here WITH a comment + rationale.
-ignore = [
-    # `paste` is unmaintained (no vuln). It is a build-time proc-macro pulled in
-    # transitively by `metal`/`wgpu-hal` (the vulkan + metal GPU backends) and is
-    # not in our runtime; there is no maintained drop-in and the version is pinned
-    # by wgpu. Revisit when wgpu drops it. https://rustsec.org/advisories/RUSTSEC-2024-0436
-    "RUSTSEC-2024-0436",
-    # `bincode` 1.3.3 is unmaintained (no vuln) — its team ceased development and the advisory
-    # itself states 1.3.3 is "a complete version not in need of any updates". It is a DEV-ONLY
-    # dependency: `algo-pearl` (and, transitively, `stratum`) use it solely to gate the Pearl
-    # `PlainProof` bincode wire bytes against the upstream reference KAT. Not in any runtime path.
-    # https://rustsec.org/advisories/RUSTSEC-2025-0141
-    "RUSTSEC-2025-0141",
-    # `rustls-pemfile` 2.2.0 is unmaintained (no vuln) — its code was folded into
-    # `rustls-pki-types` and the latest release is a thin wrapper around it. It is pulled
-    # transitively by `tonic` 0.12 (the gRPC/V2 pool transport) for client-cert PEM
-    # parsing; we use webpki roots + ring and never load PEMs at runtime, and there is no
-    # safe upgrade available. Revisit when tonic drops it. https://rustsec.org/advisories/RUSTSEC-2025-0134
-    "RUSTSEC-2025-0134",
-]
+#
+# Nothing is ignored, and that is worth keeping. This file arrived from the monorepo this
+# repository was extracted out of, carrying three exemptions inherited wholesale:
+# RUSTSEC-2024-0436 (`paste`, via the wgpu/metal GPU backends), RUSTSEC-2025-0141 (`bincode`, a
+# dev-only dependency of `algo-pearl`) and RUSTSEC-2025-0134 (`rustls-pemfile`, via `tonic`). None
+# of those three crates has ever been in this workspace's dependency graph — verified with
+# `cargo tree --all-features --workspace -i <crate>`, which matches no package for any of them.
+#
+# They were not merely useless. `[bans] deny` below now names `tonic` explicitly as a crate that
+# must never enter the graph, so an exemption justifying itself by "pulled transitively by `tonic`
+# 0.12 (the gRPC/V2 pool transport)" sat in the same file, describing a network transport, in a
+# repository whose central claim is that it has none. A reader opening this file to audit the
+# offline claim found gRPC in it. Stale configuration is not neutral when the configuration is the
+# evidence.
+#
+# To accept a known issue, add its ID here WITH a comment and a rationale — and delete the entry
+# when the dependency that needed it goes away.
+ignore = []
 
 [licenses]
 version = 2
-# Only permissive, redistribution-friendly licenses for
-# third-party deps. This list is derived from the actual dependency tree
-# (`cargo metadata` over 267 packages, 29 distinct SPDX expressions, all targets).
+# Only permissive, redistribution-friendly licenses for third-party deps. This list is derived from
+# the actual dependency tree: `cargo metadata --all-features` over 54 packages carrying 12 distinct
+# SPDX expressions, all targets.
+#
+# The numbers above used to read "267 packages, 29 distinct SPDX expressions", which was this
+# file's inherited description of the monorepo it came from, not of this workspace — and it brought
+# allowances nothing here has ever used. `cargo deny check` reported four as unmatched (`ISC`,
+# `Unicode-3.0`, `CDLA-Permissive-2.0`, `Unlicense`); `Apache-2.0 WITH LLVM-exception` was not
+# flagged but is equally unnecessary, since the one expression carrying it
+# (`Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`, from `wasi`) is satisfied by two other
+# entries on this list. An allowlist is a gate, so an entry no dependency needs
+# is a pre-authorized slot: a crate under that license could enter the tree and clear the gate with
+# nobody making a decision. Every line below is matched by something actually in the graph. If a new
+# dependency brings a license that is permissive but not listed, the check fails, and adding it back
+# is a one-line commit with a reviewer attached — which is the point.
 allow = [
     "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
     "MIT",
     "MIT-0",
-    "ISC",
     "BSD-2-Clause",
     "BSD-3-Clause",
-    "Unicode-3.0",
-    "CDLA-Permissive-2.0",
     "CC0-1.0",
-    "Unlicense",
     "Zlib",
 ]
 confidence-threshold = 0.9
@@ -60,6 +65,60 @@ multiple-versions = "warn"
 wildcards = "warn"
 # Intra-workspace path deps are declared without a version; that's expected here.
 allow-wildcard-paths = true
+
+# The machine-checked half of the "offline by construction" claim.
+#
+# README.md and crates/wallet/README.md both tell the reader that none of our dependencies can
+# open a socket, and invite them to confirm it from `Cargo.toml` alone. That invitation is only
+# honest if something fails when it stops being true — prose does not fail CI. This list is that
+# something: if any of these enters the graph, directly or transitively, `cargo deny check` fails
+# and the README must be corrected before the change can land.
+#
+# `[graph] all-features = true` above means this is evaluated with every feature enabled, so a
+# network stack hidden behind an off-by-default feature is caught too, not just the default build.
+#
+# None of these are in the tree today (verified with `cargo tree --all-features --target all`), so
+# the list costs nothing until the day it earns its keep. It is a denylist, not a proof: it names
+# the crates a Rust program realistically reaches for to talk to a network, and a determined author
+# could still hand-roll a socket. It raises the bar from "nobody noticed" to "somebody decided".
+# Extend it rather than removing entries; if one must be removed, the READMEs change in the same
+# commit.
+deny = [
+    # Async runtimes and reactors — the event loops that own the sockets.
+    "tokio",
+    "mio",
+    "async-std",
+    "smol",
+    "async-io",
+    # Raw socket bindings.
+    "socket2",
+    # HTTP clients, native and pure-Rust alike.
+    "reqwest",
+    "ureq",
+    "isahc",
+    "attohttpc",
+    "surf",
+    "curl",
+    "curl-sys",
+    # HTTP protocol machinery and servers. `hyper` covers both client and server use.
+    "hyper",
+    "hyper-util",
+    "h2",
+    "axum",
+    "actix-web",
+    "warp",
+    "tonic",
+    # TLS stacks. Nothing offline needs to negotiate a session key with a remote peer; their
+    # presence is evidence of a transport even when the transport crate itself is not visible.
+    "rustls",
+    "native-tls",
+    "openssl",
+    "openssl-sys",
+    # WebSockets and QUIC.
+    "tungstenite",
+    "tokio-tungstenite",
+    "quinn",
+]
 
 [sources]
 # Only crates.io is allowed as a registry; unknown git sources are rejected.
