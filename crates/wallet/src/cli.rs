@@ -196,6 +196,14 @@ fn cmd_new(coin: &str, net: Network, legacy: bool, testnet: bool) -> Result<(), 
         println!("   you, not gated by a known-answer test. A wrong version byte produces a");
         println!("   valid-LOOKING address that silently misdirects your payout. Before mining to");
         println!("   it, confirm this exact address in the coin's own wallet / block explorer.");
+        // A wrong version byte is not the only way a token can be wrong: the family's hash
+        // primitives are fixed by the encoder and cannot be stated in the token at all, so for
+        // those families the user gets told what was assumed on their behalf.
+        if let Some(caveat) = crate::coins::token_caveat(coin) {
+            for line in caveat.lines() {
+                println!("   {line}");
+            }
+        }
     }
     if coin == "pearl" && !testnet {
         println!();
@@ -374,6 +382,13 @@ fn cmd_list() -> Result<(), CliError> {
         };
         let line = format!("  --coin {:<width$}{example}", g.syntax, width = width);
         println!("{}", line.trim_end());
+        // Printed under the family it belongs to, so a user reading one grammar line cannot miss
+        // the assumption that line makes on their behalf.
+        if let Some(caveat) = g.caveat {
+            for (i, note) in caveat.lines().enumerate() {
+                println!("         {} {note}", if i == 0 { "!!" } else { "  " });
+            }
+        }
     }
     println!("  (integers: decimal, or 0x-prefixed hex)");
     Ok(())

@@ -35,6 +35,23 @@ fuzz_target!(|data: &[u8]| {
         "accepted a string with no room for a checksum"
     );
 
+    // BIP173 "Bech32" bounds a bech32 string at 90 characters and its HRP at 1 to 83 US-ASCII
+    // characters, each in the range [33-126]. `verify` enforces the total length and the character
+    // range directly; the HRP's 83-character ceiling then follows from those two plus the check
+    // above, so asserting it here tests the arithmetic rather than restating a check. All three
+    // were missing until the BIPs' invalid vectors were asserted, and the out-of-range-HRP and
+    // over-length vectors verified: their checksums were computed over exactly the bytes the BIP
+    // forbids, so no amount of polymod can notice — only an explicit rule can.
+    assert!(
+        lower.len() <= 90,
+        "accepted a string longer than 90 characters"
+    );
+    assert!(hrp.len() <= 83, "accepted an HRP longer than 83 characters");
+    assert!(
+        hrp.bytes().all(|b| (33..=126).contains(&b)),
+        "HRP {hrp:?} has a character outside the BIP173 range [33-126]"
+    );
+
     // A string `verify` accepted is single-case by construction — the mixed-case guard is the first
     // thing it does — and `verify` lower-cases internally before touching anything else. So
     // lower-casing an accepted string cannot change what it computes. (The converse does not hold:

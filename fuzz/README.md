@@ -136,7 +136,12 @@ crash on startup — each target pins invariants that were read back out of the 
   separator and a six-character checksum. Lower-casing a string `verify` already accepted cannot
   change what it returns, because it rejects mixed case first and lower-cases internally anyway. The
   converse is not asserted: lower-casing a *rejected* mixed-case string can legitimately turn it
-  into a valid address.
+  into a valid address. On top of that, an accepted string is within BIP173's bounds — at most 90
+  characters, with an HRP of at most 83 whose every character is in the range [33-126]. Those two
+  rules used to be missing from `verify`, and the BIPs' out-of-range-HRP and over-length invalid
+  vectors verified: their checksums were computed over exactly the bytes the BIP forbids, so the
+  polymod agrees with them and only an explicit rule rejects them. The near misses now seeded into
+  `corpus/bech32/` are those same vectors.
 * **`hexbytes`** — an accepted string is exactly twice as long as its output; `decode_n::<N>`, being
   `decode` plus a width check, must agree with `decode` for every `N`; and `encode(decode(s))` is
   `s` lower-cased. That last one used to be listed here as deliberately **not** asserted, because it
