@@ -39,6 +39,31 @@ pub enum Family {
 #[derive(Debug, Clone, Copy)]
 pub enum FamilyParams {
     /// P2PKH parameters.
+    ///
+    /// A row carries the *bytes* only.  The two hash primitives are fixed by the encoder and are
+    /// not expressible here: `families::p2pkh` hashes the pubkey with HASH160 (SHA-256 then
+    /// RIPEMD-160), and [`crate::codec::base58::encode_check`] checksums with the first four bytes
+    /// of double-SHA-256.  Every coin in [`COINS`] is a Bitcoin derivative that keeps both, so no
+    /// row here is wrong — but the pair is an *assumption*, and it is the one thing a
+    /// [`parse_token`] `p2pkh:` token cannot restate.  Two shipping chains break it:
+    ///   - **Groestlcoin** keeps HASH160 unchanged (`src/hash.h`, `CHash160` = SHA-256 +
+    ///     RIPEMD-160) but replaces the base58check checksum: `src/base58.cpp`'s
+    ///     `EncodeBase58Check` calls `XCoin::HashForAddress`, which `src/groestlcoin.h` aliases to
+    ///     `HashGroestl` — Groestl-512 applied twice, the first 32 bytes of the second digest
+    ///     (`src/groestlcoin-hash.cpp`).  The patch is in base58 itself, so every base58check
+    ///     string differs, address and WIF alike.  Its `PUBKEY_ADDRESS` is 36 and `SECRET_KEY` 128
+    ///     (`src/kernel/chainparams.cpp`), which is exactly why `p2pkh:ver=0x24,wif=0x80` looks
+    ///     plausible.  Source: `Groestlcoin/groestlcoin`.
+    ///   - **Decred** changes both: `Hash160` is `ripemd160(blake256(·))` (`decred/dcrd`
+    ///     `dcrutil/hash160.go` over `chaincfg/chainhash/hashfuncs.go`'s `HashB`), and the
+    ///     checksum is double-BLAKE-256 over a *two*-byte version (`decred/base58`
+    ///     `base58check.go`, `CheckEncode(input []byte, version [2]byte)`; mainnet
+    ///     `PubKeyHashAddrID` is `0x07,0x3f` → `Ds…`).
+    ///
+    /// Neither is in [`COINS`], and neither can be added by a table row: each needs a hash
+    /// primitive this workspace does not implement, and the table's own rule is that no row lands
+    /// without a passing KAT.  The defence for the runtime escape hatch is therefore the
+    /// [`TokenSyntax::caveat`] on the `p2pkh` grammar row, which the CLI prints.
     P2pkh {
         /// Version prefix for mainnet addresses (e.g. `[0x00]` for BTC, `[0x1E]` for DOGE,
         /// `[0x1C, 0xB8]` for a Zcash-family t-address).
@@ -580,6 +605,15 @@ pub struct TokenSyntax {
     /// A worked example token.  Every entry's example must parse — see the
     /// `every_grammar_family_parses_its_example` test.
     pub example: &'static str,
+    /// What this family assumes but does not let the token state, or `None` when the token's
+    /// parameters are the whole story.
+    ///
+    /// A token can only carry what [`parse_token`] has a slot for.  Where the encoder additionally
+    /// hard-wires something a real chain varies — the P2PKH hash primitives, see
+    /// [`FamilyParams::P2pkh`] — the token cannot express it and the parser cannot check it, so the
+    /// only remaining defence is telling the user.  Printed verbatim by `forager-wallet list` and
+    /// again beside the minted address; one line per `\n`, kept short enough for a terminal.
+    pub caveat: Option<&'static str>,
 }
 
 /// The runtime coin-token grammar: one row per address family a token can drive.
@@ -595,6 +629,13 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &["uncompressed"],
         syntax: "p2pkh:ver=<byte>,wif=<byte>[,uncompressed]",
         example: "p2pkh:ver=0x00,wif=0x80",
+        caveat: Some(
+            "This token sets bytes, not hashes: it always uses Bitcoin's HASH160 pubkey hash\n\
+             and Bitcoin's SHA256d base58check checksum. That is right for Bitcoin-derived\n\
+             chains and WRONG for Groestlcoin (double-Groestl-512 checksum) and Decred\n\
+             (BLAKE-256, two-byte version) — for those, both the address and the WIF are\n\
+             wrong, and no `ver=` can fix it.",
+        ),
     },
     TokenSyntax {
         family: "segwit",
@@ -602,6 +643,14 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "segwit:hrp=<str>,wif=<byte>[,ver=<byte>]",
         example: "segwit:hrp=bc,wif=0x80",
+        // The bech32 address itself carries no hash-based checksum, but `--legacy` and the WIF
+        // both go through the same base58check encoder as `p2pkh:`, so they inherit its
+        // assumption. Spelled out rather than cross-referenced: the two caveats are printed
+        // independently, and a user reading the `segwit:` line may never see the `p2pkh:` one.
+        caveat: Some(
+            "The `--legacy` address form and the WIF are base58check with Bitcoin's SHA256d\n\
+             checksum, so they are wrong for a chain that changed it (e.g. Groestlcoin).",
+        ),
     },
     TokenSyntax {
         family: "taproot",
@@ -609,6 +658,7 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "taproot:hrp=<str>",
         example: "taproot:hrp=prl",
+        caveat: None,
     },
     TokenSyntax {
         family: "cryptonote",
@@ -616,6 +666,7 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "cryptonote:net=<int>[,net_test=<int>]",
         example: "cryptonote:net=18",
+        caveat: None,
     },
     TokenSyntax {
         family: "kaspa",
@@ -623,6 +674,7 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "kaspa:prefix=<str>",
         example: "kaspa:prefix=kaspa",
+        caveat: None,
     },
     TokenSyntax {
         family: "ethereum",
@@ -630,6 +682,7 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "ethereum:",
         example: "ethereum:",
+        caveat: None,
     },
     TokenSyntax {
         family: "ergo",
@@ -637,6 +690,7 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "ergo:",
         example: "ergo:",
+        caveat: None,
     },
     TokenSyntax {
         family: "alephium",
@@ -644,6 +698,7 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "alephium:",
         example: "alephium:",
+        caveat: None,
     },
     TokenSyntax {
         family: "xdag",
@@ -651,8 +706,23 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         flags: &[],
         syntax: "xdag:",
         example: "xdag:",
+        caveat: None,
     },
 ];
+
+/// The [`TokenSyntax::caveat`] for a runtime coin token's family, or `None` if it has none.
+///
+/// Keyed off the token's `family:` prefix, so the warning printed beside a minted address comes
+/// from the same grammar row as the `forager-wallet list` help text — a caveat cannot appear in one
+/// place and not the other.  `None` for a table ticker (which has no `:`) and for an unknown
+/// family, both of which are the caller's own error to report.
+pub fn token_caveat(token: &str) -> Option<&'static str> {
+    let (family, _) = token.split_once(':')?;
+    TOKEN_GRAMMAR
+        .iter()
+        .find(|g| g.family == family)
+        .and_then(|g| g.caveat)
+}
 
 /// Parse a runtime `family:params` coin token into an ad-hoc [`CoinSpec`].
 ///
@@ -667,6 +737,11 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
 /// valid-*looking* address that silently misdirects the payout.  The encoder is trusted; the
 /// parameters are not.  The leaked `ticker`/`name` strings live for the process lifetime — keygen
 /// is a one-shot CLI action, never a hot path.
+///
+/// A token is also narrower than a family: it can only say what the grammar has a slot for.  The
+/// `p2pkh:` token supplies version and WIF bytes but no hash primitives, and the encoder's
+/// Bitcoin pair is wrong for some real chains — [`token_caveat`] carries the text the caller must
+/// print, and [`FamilyParams::P2pkh`] names the chains and cites them.
 pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
     let (family, rest) = token
         .split_once(':')
@@ -864,6 +939,55 @@ mod tests {
             assert_eq!(spec.ticker, g.example);
             // A runtime token names no chain, so HD is never offered for one.
             assert!(spec.hd_slip44.is_none(), "{}", g.family);
+        }
+    }
+
+    /// The `p2pkh` token names the hashes it assumes and the chains that assumption is wrong for.
+    ///
+    /// This is the guarantee the grammar cannot make structurally: [`FamilyParams::P2pkh`] carries
+    /// version and WIF bytes but no hasher, so `parse_token` has nothing to validate and no way to
+    /// refuse a Groestlcoin or Decred token — those tokens are well-formed. The caveat is the only
+    /// thing standing between a user and a silently wrong address, so pin its contents rather than
+    /// its mere presence.
+    #[test]
+    fn the_p2pkh_caveat_names_the_hashes_it_assumes_and_the_chains_it_is_wrong_for() {
+        let row = TOKEN_GRAMMAR
+            .iter()
+            .find(|g| g.family == "p2pkh")
+            .expect("the grammar has a p2pkh row");
+        let caveat = row.caveat.expect("the p2pkh row must carry a caveat");
+        for needle in ["HASH160", "SHA256d", "Groestlcoin", "Decred"] {
+            assert!(caveat.contains(needle), "p2pkh caveat omits {needle}");
+        }
+    }
+
+    /// The caveat reaches the user for the token they actually typed, not just for the bare family
+    /// name — the CLI looks it up by the `--coin` argument it was handed.
+    #[test]
+    fn token_caveat_resolves_for_any_spelling_of_a_caveated_family() {
+        let p2pkh = TOKEN_GRAMMAR
+            .iter()
+            .find(|g| g.family == "p2pkh")
+            .and_then(|g| g.caveat);
+        // Groestlcoin's own PUBKEY_ADDRESS=36 / SECRET_KEY=128 (src/kernel/chainparams.cpp): the
+        // exact token that parses cleanly and mints an address Groestlcoin will not recognise.
+        assert_eq!(token_caveat("p2pkh:ver=0x24,wif=0x80"), p2pkh);
+        assert_eq!(token_caveat("p2pkh:ver=0x00,wif=0x80,uncompressed"), p2pkh);
+        assert!(token_caveat("ethereum:").is_none());
+        assert!(token_caveat("btc").is_none()); // a table ticker is not a token
+        assert!(token_caveat("bogus:x=1").is_none());
+    }
+
+    /// Every caveat is printable: non-empty, and no blank line inside it. Both render as a bare
+    /// `!!` in the CLI, which reads as a warning that forgot to say anything.
+    #[test]
+    fn every_caveat_has_only_non_empty_lines() {
+        for g in TOKEN_GRAMMAR {
+            let Some(caveat) = g.caveat else { continue };
+            assert!(!caveat.is_empty(), "{}: empty caveat", g.family);
+            for line in caveat.lines() {
+                assert!(!line.trim().is_empty(), "{}: blank caveat line", g.family);
+            }
         }
     }
 
