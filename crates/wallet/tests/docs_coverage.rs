@@ -323,6 +323,17 @@ fn leading_characters(spec: &coins::CoinSpec) -> Leading {
             &base58::encode(&payload_end(&[], 0x00, HASH160 + CHECKSUM)),
             &base58::encode(&payload_end(&[], 0xff, HASH160 + CHECKSUM)),
         ),
+        // Warthog renders `HASH160(pubkey) ‖ SHA256(HASH160)[..4]` as bare hex. Hex is fixed-width
+        // and positional per byte — unlike base58 there is no carry, so no leading character can be
+        // forced by a shorter payload or a version byte, and there is neither here. The first
+        // character is the high nibble of the first HASH160 byte, which is key-dependent across the
+        // full `0`–`f` range. So nothing forces a prefix, and this is a property of the encoding
+        // rather than a gap in the analysis.
+        coins::FamilyParams::Warthog => Leading::Undecided(
+            "the address is bare hex of a key-dependent hash with no version byte or prefix, so \
+             its first character is the high nibble of HASH160's first byte"
+                .to_string(),
+        ),
     }
 }
 

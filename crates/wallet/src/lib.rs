@@ -284,11 +284,12 @@ pub(crate) fn dispatch(
             codec::cashaddr::encode(prefix, 0, &xonly)
         }
         // Ergo's network prefix is a protocol constant for both networks, so it has no
-        // `UnsupportedTestnet` case.  Alephium and XDAG addresses are network-agnostic outright:
-        // `net` is accepted and changes nothing.
+        // `UnsupportedTestnet` case.  Alephium, XDAG and Warthog addresses are network-agnostic
+        // outright: `net` is accepted and changes nothing.
         coins::FamilyParams::Ergo => families::ergo::address(d, net == Network::Testnet),
         coins::FamilyParams::Alephium => families::alephium::address(d),
         coins::FamilyParams::Xdag => families::xdag::address(d),
+        coins::FamilyParams::Warthog => families::warthog::address(d),
 
         coins::FamilyParams::SegwitV0 {
             hrp,
