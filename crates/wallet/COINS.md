@@ -22,6 +22,7 @@ Run `forager-wallet list` for the live table — this file documents it, and a t
 | Ergo P2PK | base58(prefix ‖ compressed pubkey ‖ Blake2b256[..4]) | secp256k1 |
 | Alephium | base58(0x00 ‖ Blake2b256(compressed pubkey)), no checksum | secp256k1 |
 | XDAG | base58check(HASH160(pubkey)) with **no** version byte | secp256k1 |
+| Warthog | hex(HASH160(pubkey) ‖ SHA256(HASH160)[..4]) — single SHA-256, no version byte | secp256k1 |
 
 ## The coin table
 
@@ -76,8 +77,9 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `erg` | Ergo | Ergo P2PK | `9…` | — |
 | `alph` | Alephium | Alephium | `1…` | — |
 | `xdag` | XDAG | XDAG | no fixed prefix | — |
+| `wart` | Warthog | Warthog | no fixed prefix | — |
 
-Three rows need a word of explanation:
+Four rows need a word of explanation:
 
 - **`scash`** — `bc1q…` is not a typo. Scash left Bitcoin's base58 and bech32 parameters unchanged,
   so a Scash address is byte-identical to the Bitcoin address for the same key, and no encoding can
@@ -87,6 +89,10 @@ Three rows need a word of explanation:
   `BgGZ9tcN4rm9KBzDn7KprQz87SZ1k5oUs` (33 characters) and `0000…0002` mints
   `cMh228HTCiwS8ZsaakH8A8wze1FZeuap` (32). There is no prefix to document, and printing one would be
   a lie.
+- **`wart`** — a Warthog address is the same 20-byte HASH160 payload as XDAG, but rendered as bare
+  hex with a **single**-SHA-256 checksum instead of base58check's double. Hex is fixed-width and
+  positional, so every address is exactly 48 characters — but the first of them is the high nibble
+  of a key-dependent hash byte, so it ranges over `0`–`f` and no prefix exists to document.
 - **`firo`** — the table's only `(most keys)` row. Version byte `0x52` puts the 25-byte payload
   astride the base58 boundary between digit 32 (`Z`) and digit 33 (`a`): the interval the payload
   can occupy lies 1.222% below that boundary and 98.778% above it, so 98.8% of keys render `a…` and
@@ -201,6 +207,7 @@ token's `--legacy` form and its WIF inherit the same assumption.
 --coin ergo:
 --coin alephium:
 --coin xdag:
+--coin warthog:
 ```
 
 Integers are decimal or `0x`-prefixed hex. An unrecognised parameter is rejected rather than

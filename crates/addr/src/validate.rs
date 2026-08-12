@@ -22,8 +22,13 @@
 
 use std::sync::OnceLock;
 
+use sha2::{Digest, Sha256};
+
 use crate::codec::{base58, bech32, cashaddr, cryptonote};
 use crate::coins::{Family, FamilyParams, COINS};
+
+/// Characters in a Warthog address: 24 bytes (`hash160(20) ‖ checksum(4)`), two nibbles each.
+const WARTHOG_HEX_LEN: usize = 48;
 
 /// Longest address string detection will look at, in bytes.
 ///
@@ -70,6 +75,30 @@ pub fn detect_family(addr: &str) -> Option<Family> {
             && eip55_case_checksum_holds(rest)
         {
             return Some(Family::Ethereum);
+        }
+    }
+
+    // 1b. Warthog: 48 hex characters encoding `hash160(20) ‖ SHA256(hash160)[0..4]`, with the
+    //     checksum verified. Source: `warthog-network/core@54403b8`
+    //     `src/shared/src/crypto/address.cpp` — `Address(std::string_view)` parses 24 bytes of hex
+    //     and compares `sha256(bytes[0..20])[0..4]` against the trailing four. The derivation side
+    //     is `forager-wallet`'s `families/warthog.rs`.
+    //
+    //     The checksum is the whole answer here. A Warthog address carries no prefix, no version
+    //     byte and no human-readable part, so shape alone is just "48 hex characters" — a string a
+    //     truncated hash or a mistyped secret could also produce. Nothing else modelled is bare hex
+    //     (Ethereum is 40 nibbles behind a `0x`, handled above), so a verified checksum makes this
+    //     unambiguous, and an unverified one would make it a guess.
+    //
+    //     Case-insensitive: the node emits lowercase, but its own parser accepts either, and a user
+    //     pasting an uppercased address from a block explorer should not be warned off a correct
+    //     payout.
+    if a.len() == WARTHOG_HEX_LEN {
+        if let Some(bytes) = crate::hexbytes::decode(a) {
+            let (payload, checksum) = bytes.split_at(HASH160_LEN);
+            if Sha256::digest(payload)[..4] == *checksum {
+                return Some(Family::Warthog);
+            }
         }
     }
 
@@ -208,6 +237,7 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Ergo => "Ergo P2PK",
         Family::Alephium => "Alephium",
         Family::Xdag => "XDAG",
+        Family::Warthog => "Warthog (hex)",
     }
 }
 
@@ -1100,6 +1130,37 @@ mod tests {
     fn detects_xdag() {
         assert_eq!(detect_family(XDAG_SAMPLE_KEYS), Some(Family::Xdag));
         assert_eq!(check(XDAG_SAMPLE_KEYS, Family::Xdag), Verdict::Ok);
+    }
+
+    /// The Warthog vector published by the project's own client libraries — `warthog_py`
+    /// (`tests/test_address.py`) and `warthog-ts` (`src/tests/account.test.ts`) both assert this
+    /// exact string. The derivation side is `forager-wallet`'s `families/warthog.rs`.
+    const WARTHOG_CLIENT_LIB: &str = "3661579d61abde5837a8686dc4d65348a2fc61b1fe5f4093";
+
+    #[test]
+    fn detects_warthog() {
+        assert_eq!(detect_family(WARTHOG_CLIENT_LIB), Some(Family::Warthog));
+        assert_eq!(check(WARTHOG_CLIENT_LIB, Family::Warthog), Verdict::Ok);
+    }
+
+    /// A Warthog address is bare hex with nothing to anchor it but its checksum, so the checksum is
+    /// the whole of the answer. A corrupted paste must not come back as a confident `Warthog` —
+    /// this is the same trap the Kaspa and Ergo arms were fixed for.
+    #[test]
+    fn a_corrupted_warthog_address_is_not_confidently_classified() {
+        let bad_checksum = format!("{}00000000", &WARTHOG_CLIENT_LIB[..40]);
+        assert_ne!(detect_family(&bad_checksum), Some(Family::Warthog));
+
+        // Flip one nibble of the payload: the checksum no longer covers it.
+        let mut corrupted = WARTHOG_CLIENT_LIB.to_string();
+        corrupted.replace_range(0..1, "4");
+        assert_ne!(detect_family(&corrupted), Some(Family::Warthog));
+
+        // Right shape, wrong length.
+        assert_ne!(
+            detect_family(&WARTHOG_CLIENT_LIB[..46]),
+            Some(Family::Warthog)
+        );
     }
 
     /// XDAG and P2PKH are different chains, so a paste of one where the other is expected is a

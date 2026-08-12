@@ -405,6 +405,7 @@ fn family_label(family: Family) -> &'static str {
         Family::Ergo => "Ergo P2PK",
         Family::Alephium => "Alephium P2PKH",
         Family::Xdag => "XDAG (Base58Check, no version)",
+        Family::Warthog => "Warthog (hex, single-SHA256 checksum)",
     }
 }
 

@@ -240,6 +240,64 @@ fn every_generated_xdag_address_round_trips_through_detection() {
     }
 }
 
+/// Every Warthog address the generator emits round-trips through detection, and no single-nibble
+/// corruption of one does.
+///
+/// Warthog carries no prefix, no version byte and no human-readable part — an address is 48 hex
+/// characters and nothing else — so the four-byte SHA-256 checksum is the entire basis on which
+/// detection can answer. That makes the corruption half of this test the load-bearing half: a shape
+/// test alone would classify any 48-character hex string as Warthog, including a truncated hash or
+/// a mistyped secret.
+#[test]
+fn every_generated_warthog_address_round_trips_through_detection() {
+    // The vector `families/warthog.rs` pins, published by the project's own `warthog_py` and
+    // `warthog-ts` client libraries — so a change to either side shows up here.
+    let w = forager_wallet::address_from_secret(
+        "wart",
+        "966a71a98bb5d13e9116c0dffa3f1a7877e45c6f563897b96cfd5c59bf0803e0",
+        Network::Mainnet,
+    )
+    .unwrap();
+    assert_eq!(
+        w.address,
+        "3661579d61abde5837a8686dc4d65348a2fc61b1fe5f4093"
+    );
+    assert_eq!(detect_family(&w.address), Some(Family::Warthog));
+
+    for i in 1u32..=64 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("wart", &secret, Network::Mainnet).unwrap();
+        assert_eq!(w.address.len(), 48, "key {secret}: {}", w.address);
+        assert_eq!(
+            detect_family(&w.address),
+            Some(Family::Warthog),
+            "key {secret}: {}",
+            w.address
+        );
+        assert_eq!(
+            check(&w.address, Family::Warthog),
+            Verdict::Ok,
+            "{}",
+            w.address
+        );
+
+        // Every single-character corruption must stop being a confident Warthog. Walking all 48
+        // positions covers the checksum bytes as well as the payload, so this also pins that the
+        // checksum is compared rather than merely present.
+        for pos in 0..48 {
+            let mut bad = w.address.clone().into_bytes();
+            bad[pos] = if bad[pos] == b'0' { b'1' } else { b'0' };
+            let bad = String::from_utf8(bad).unwrap();
+            assert_ne!(
+                detect_family(&bad),
+                Some(Family::Warthog),
+                "corruption at {pos} of {} still detected",
+                w.address
+            );
+        }
+    }
+}
+
 /// Every KAD address the generator emits classifies as the form the live chain issues.
 ///
 /// Kadikama is the coin table's one row where the chain params and the network's practice

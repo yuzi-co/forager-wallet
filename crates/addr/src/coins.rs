@@ -33,6 +33,11 @@ pub enum Family {
     /// XDAG modern account address: `Base58Check(HASH160(compressed_pubkey))` — Bitcoin's hash160
     /// + Base58Check but with NO version byte, network-agnostic.
     Xdag,
+    /// Warthog (WART): `HEX(HASH160(compressed_pubkey) ‖ SHA256(HASH160(..))[0..4])` — the same
+    /// hash160 payload as [`Family::Xdag`], rendered as bare lowercase hex under a **single**
+    /// SHA-256 checksum instead of Base58Check's double. No version byte, no prefix,
+    /// network-agnostic; always 48 characters.
+    Warthog,
 }
 
 /// Per-coin parameters that parameterise the address-derivation algorithm.
@@ -123,6 +128,9 @@ pub enum FamilyParams {
     Alephium,
     /// XDAG has no per-coin parameters — the address is network-agnostic (no version byte).
     Xdag,
+    /// Warthog has no per-coin parameters — the address is network-agnostic (no version byte, no
+    /// prefix). The node uses the same encoding on testnet.
+    Warthog,
 }
 
 impl FamilyParams {
@@ -139,6 +147,7 @@ impl FamilyParams {
             FamilyParams::Ergo => Family::Ergo,
             FamilyParams::Alephium => Family::Alephium,
             FamilyParams::Xdag => Family::Xdag,
+            FamilyParams::Warthog => Family::Warthog,
         }
     }
 
@@ -508,6 +517,18 @@ pub static COINS: &[CoinSpec] = &[
         hd_slip44: None,
         params: FamilyParams::Xdag,
     },
+    // ---- Warthog family ----
+    // Warthog (WART): address = HEX(HASH160(compressed_pubkey) ‖ SHA256(HASH160(..))[0..4]) —
+    // the same hash160 payload as XDAG above, rendered as bare lowercase hex under a SINGLE
+    // SHA-256 checksum rather than Base58Check's double. Source: warthog-network/core (MIT)
+    // src/shared/src/crypto/crypto.cpp (`PubKey::address`) + src/shared/src/crypto/address.cpp
+    // (`AddressView::serialize` / `to_string`).
+    CoinSpec {
+        ticker: "wart",
+        name: "Warthog",
+        hd_slip44: None,
+        params: FamilyParams::Warthog,
+    },
     // SCASH ("Satoshi Cash", RandomX): address bytes left BYTE-IDENTICAL to Bitcoin — P2PKH
     // 0x00, WIF 0x80, bech32 HRP "bc"; testnet 0x6f/"tb". So a SCASH address is indistinguishable
     // from a BTC one (same encoder, same bytes).  Source: scashnetwork/scash (MIT),
@@ -740,6 +761,14 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         example: "xdag:",
         caveat: None,
     },
+    TokenSyntax {
+        family: "warthog",
+        keys: &[],
+        flags: &[],
+        syntax: "warthog:",
+        example: "warthog:",
+        caveat: None,
+    },
 ];
 
 /// The [`TokenSyntax::caveat`] for a runtime coin token's family, or `None` if it has none.
@@ -853,6 +882,7 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
         "ergo" => FamilyParams::Ergo,
         "alephium" => FamilyParams::Alephium,
         "xdag" => FamilyParams::Xdag,
+        "warthog" => FamilyParams::Warthog,
         // Unreachable while `TOKEN_GRAMMAR` and this match list the same families — the lookup above
         // already rejected any name the grammar does not carry.  Report it instead of panicking, so a
         // grammar row added without an arm here degrades to a clear message; the
@@ -1239,6 +1269,7 @@ mod tests {
                 FamilyParams::Ergo => Family::Ergo,
                 FamilyParams::Alephium => Family::Alephium,
                 FamilyParams::Xdag => Family::Xdag,
+                FamilyParams::Warthog => Family::Warthog,
             };
             assert_eq!(spec.family(), expected, "{}", spec.ticker);
         }
