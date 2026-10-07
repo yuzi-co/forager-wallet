@@ -1,6 +1,6 @@
 # Forager Wallet
 
-**Offline payout-address and key generation for 30 cryptocurrencies.** No pool, no GPU, no network.
+**Offline payout-address and key generation for 32 cryptocurrencies.** No pool, no GPU, no network.
 
 ```sh
 cargo install forager-wallet

@@ -168,6 +168,9 @@ fn declares_testnet(params: &coins::FamilyParams) -> bool {
         coins::FamilyParams::P2pkh {
             version_testnet, ..
         } => version_testnet.is_some(),
+        // Conflux's testnet prefix is not an `Option`: CIP-37 gives every network a prefix, and a
+        // row has to name both, so there is always a testnet value to check.
+        coins::FamilyParams::Conflux { .. } => true,
         coins::FamilyParams::CryptoNote {
             network_byte_testnet,
             ..
@@ -187,7 +190,8 @@ fn declares_testnet(params: &coins::FamilyParams) -> bool {
 /// Where each row's testnet output is pinned today:
 /// * `btc`, `ltc`, `scash`, `alpha`, `rvn`, `doge`, `kad` — this file.
 /// * `xmr` — `families::cryptonote::tests::monero_testnet_address_uses_network_byte_53`.
-/// * `pearl`, `vtc`, `firo`, `mewc`, `kas`, `kls`, `spr` — their per-coin tests in `lib.rs`.
+/// * `pearl`, `vtc`, `firo`, `mewc`, `evr`, `cfx`, `kas`, `kls`, `spr` — their per-coin tests in
+///   `lib.rs`.
 #[test]
 fn every_row_declaring_a_testnet_variant_has_a_testnet_kat() {
     let declared: Vec<&str> = coins::COINS
@@ -198,8 +202,8 @@ fn every_row_declaring_a_testnet_variant_has_a_testnet_kat() {
     assert_eq!(
         declared,
         [
-            "pearl", "btc", "ltc", "vtc", "doge", "rvn", "firo", "mewc", "kad", "xmr", "kas",
-            "kls", "spr", "scash", "alpha"
+            "pearl", "btc", "ltc", "vtc", "doge", "rvn", "firo", "mewc", "evr", "kad", "cfx",
+            "xmr", "kas", "kls", "spr", "scash", "alpha"
         ]
     );
     // Every one of them must actually mint on testnet rather than error — the cheap half of the

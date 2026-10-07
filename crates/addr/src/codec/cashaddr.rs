@@ -18,7 +18,7 @@ use super::bech32::{convertbits_5_to_8, convertbits_8_to_5, CHARSET};
 const CHECKSUM_CHARS: usize = 8;
 
 /// BCH-style polymod checksum (<https://bch.info/en/specifications>), 64-bit accumulator.
-fn polymod(values: impl Iterator<Item = u8>) -> u64 {
+pub(crate) fn polymod(values: impl Iterator<Item = u8>) -> u64 {
     const GEN: [u64; 5] = [
         0x0098_f2bc_8e61,
         0x0079_b76d_99e2,
@@ -41,7 +41,7 @@ fn polymod(values: impl Iterator<Item = u8>) -> u64 {
 
 /// `checksum(prefix ‖ 0 ‖ payload_5bit ‖ 0×8)`, prefix expanded by masking each byte to 5 bits
 /// (unlike bech32's `hrp_expand`, which splits each byte into high-3/low-5 halves).
-fn checksum(payload_5bit: &[u8], prefix: &str) -> u64 {
+pub(crate) fn checksum(payload_5bit: &[u8], prefix: &str) -> u64 {
     let prefix_5bit = prefix.bytes().map(|c| c & 0x1f);
     polymod(
         prefix_5bit

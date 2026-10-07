@@ -329,6 +329,17 @@ pub(crate) fn dispatch(
             let addr = families::ethereum::address(d);
             return Ok((addr, SecretStd::EthHex(secret::eth_hex(priv32)), *priv32));
         }
+        coins::FamilyParams::Conflux { hrp, hrp_testnet } => {
+            // The secret is printed in Ethereum's bare-hex form, because that is what Conflux
+            // tooling imports: the chain reuses secp256k1 and the keystore format, and only the
+            // address encoding differs.
+            let prefix = match net {
+                Network::Mainnet => hrp,
+                Network::Testnet => hrp_testnet,
+            };
+            let addr = families::conflux::address(d, prefix);
+            return Ok((addr, SecretStd::EthHex(secret::eth_hex(priv32)), *priv32));
+        }
         coins::FamilyParams::CryptoNote {
             network_byte,
             network_byte_testnet,
@@ -765,6 +776,81 @@ mod tests {
 
         let testnet = address_from_secret("mewc", PRIV1, Network::Testnet).unwrap();
         assert_eq!(testnet.address, "m3X1szP1kjNGHZPRtWR4gX5jj6XNYKHWwN");
+    }
+
+    /// EVR P2PKH for privkey=1.
+    /// Chain params confirmed: EvrmoreOrg/Evrmore/src/chainparams.cpp
+    ///   PUBKEY_ADDRESS=33(0x21), SECRET_KEY=128(0x80); testnet PUBKEY_ADDRESS=111(0x6f).
+    /// Address computed via the same independent JS base58check oracle described above. That run
+    /// also reproduced BTC version 0 as 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH and MEWC version 50 as
+    /// the address the test above asserts, so the oracle is pinned to two rows this tree already
+    /// trusts before it is believed about a third.
+    ///
+    /// Evrmore keeps Bitcoin's WIF byte, so the secret renders as Bitcoin's privkey=1 WIF. That is
+    /// not a copy-paste error: a WIF carries the key and the compression flag, not the chain.
+    /// The testnet version byte is Bitcoin's too, so the testnet address is Bitcoin's as well.
+    #[test]
+    fn evr_p2pkh_privkey_one() {
+        let w = address_from_secret("evr", PRIV1, Network::Mainnet).unwrap();
+        assert_eq!(w.address, "ETqB3jj7o29g8cnr2d6qpzPwtkwgTuXt3Q");
+        assert_eq!(w.coin, "evr");
+        match &w.secret_std {
+            SecretStd::Wif(s) => {
+                assert_eq!(s, "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn");
+            }
+            _ => panic!("expected SecretStd::Wif"),
+        }
+
+        let testnet = address_from_secret("evr", PRIV1, Network::Testnet).unwrap();
+        assert_eq!(testnet.address, "mrCDrCybB6J1vRfbwM5hemdJz73FwDBC8r");
+    }
+
+    /// CFX Core Space for the keypair `Conflux-Chain/js-conflux-sdk` publishes as its canonical
+    /// vector (`test/util/sign.test.js`: `KEY` and `ADDRESS`). The same assertion lives in
+    /// `families::conflux`; this one goes through the public `address_from_secret` seam, so it also
+    /// pins the coin row, the network choice and the secret rendering.
+    ///
+    /// The secret is printed as bare Ethereum hex rather than a WIF, because Conflux reuses
+    /// secp256k1 and Ethereum's keystore format and its tooling imports that form.
+    #[test]
+    fn cfx_conflux_sdk_vector() {
+        const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let testnet = address_from_secret("cfx", KEY, Network::Testnet).unwrap();
+        assert_eq!(
+            testnet.address,
+            "cfxtest:aasm4c231py7j34fghntcfkdt2nm9xv1tu6jd3r1s7"
+        );
+        assert_eq!(testnet.coin, "cfx");
+
+        let w = address_from_secret("cfx", KEY, Network::Mainnet).unwrap();
+        assert_eq!(w.address, "cfx:aasm4c231py7j34fghntcfkdt2nm9xv1tu0dukn7m1");
+        match &w.secret_std {
+            SecretStd::EthHex(h) => assert_eq!(h, &format!("0x{KEY}")),
+            _ => panic!("expected SecretStd::EthHex"),
+        }
+
+        // The two networks carry the same 20 bytes under different checksums, so neither string
+        // decodes on the other network. This is the mistake a prefix swap would make.
+        assert!(coins_conflux_decode(&w.address).is_some());
+        assert_eq!(
+            coins_conflux_decode(&w.address).unwrap().addr,
+            coins_conflux_decode(&testnet.address).unwrap().addr
+        );
+        assert_eq!(detect_family(&w.address), Some(Family::Conflux));
+        assert_eq!(check(&w.address, Family::Conflux), Verdict::Ok);
+        // An Ethereum address must not be read as Conflux, nor the reverse: the same key has a
+        // valid `0x…` eSpace address and it is a different payout target.
+        let eth = address_from_secret("eth", KEY, Network::Mainnet).unwrap();
+        assert_eq!(detect_family(&eth.address), Some(Family::Ethereum));
+        assert!(matches!(
+            check(&eth.address, Family::Conflux),
+            Verdict::Mismatch { .. }
+        ));
+    }
+
+    fn coins_conflux_decode(a: &str) -> Option<forager_addr::codec::conflux::Decoded> {
+        forager_addr::codec::conflux::decode(a)
     }
 
     /// KAD P2PKH for privkey=1.

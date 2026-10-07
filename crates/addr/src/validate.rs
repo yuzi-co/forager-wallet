@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
-use crate::codec::{base58, bech32, cashaddr, cryptonote};
+use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote};
 use crate::coins::{Family, FamilyParams, COINS};
 
 /// Characters in a Warthog address: 24 bytes (`hash160(20) ‖ checksum(4)`), two nibbles each.
@@ -113,6 +113,21 @@ pub fn detect_family(addr: &str) -> Option<Family> {
     if let Some(decoded) = cashaddr::decode(a) {
         if kaspa_prefixes().any(|p| p == decoded.prefix) {
             return Some(Family::KaspaAddr);
+        }
+    }
+
+    // 2b. Conflux Core Space (CIP-37): the same `<prefix>:<payload>` shape and the same CashAddr
+    //     checksum as the arm above, under CIP-37's own base32 alphabet. The two alphabets share
+    //     most of their letters, so shape cannot separate the schemes — the checksum and the
+    //     modelled prefix do, and both are verified here before this arm commits.
+    //
+    //     This must not answer `Family::Ethereum`, even though Conflux derives its address from
+    //     the same keccak160 of the same curve. The `0x…` form of that hash is a valid eSpace
+    //     address and a *different* payout target, so reporting one family for the other would
+    //     silently approve mining to the wrong address space.
+    if let Some(decoded) = conflux::decode(a) {
+        if conflux_prefixes().any(|p| p == decoded.prefix) {
+            return Some(Family::Conflux);
         }
     }
 
@@ -238,6 +253,7 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Alephium => "Alephium",
         Family::Xdag => "XDAG",
         Family::Warthog => "Warthog (hex)",
+        Family::Conflux => "Conflux Core Space (CIP-37)",
     }
 }
 
@@ -291,6 +307,22 @@ fn kaspa_prefixes() -> impl Iterator<Item = &'static str> {
         FamilyParams::KaspaAddr { prefix, .. } => Some(prefix),
         _ => None,
     })
+}
+
+/// Every Conflux network prefix detection models: each modelled row's mainnet and testnet prefix.
+///
+/// Both networks are listed, unlike the Kaspa helper, because a Conflux testnet address is the
+/// same scheme under a different prefix and a user who pastes one has made a network mistake, not
+/// a family mistake. Classifying it as Conflux lets the caller's own coin check be the thing that
+/// notices.
+fn conflux_prefixes() -> impl Iterator<Item = &'static str> {
+    COINS
+        .iter()
+        .flat_map(|c| match c.params {
+            FamilyParams::Conflux { hrp, hrp_testnet } => [Some(hrp), Some(hrp_testnet)],
+            _ => [None, None],
+        })
+        .flatten()
 }
 
 /// Monero's subaddress network prefix.  A subaddress is a legitimate payout target, so detection

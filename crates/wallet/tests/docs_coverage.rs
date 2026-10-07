@@ -252,6 +252,13 @@ fn leading_characters(spec: &coins::CoinSpec) -> Leading {
         // `prefix ‖ ':' ‖ …` (`codec::cashaddr::encode`). The payload after the colon is
         // key-dependent; the colon and everything before it is not.
         coins::FamilyParams::KaspaAddr { prefix, .. } => Leading::Forced(format!("{prefix}:")),
+        // `prefix ‖ ':' ‖ "aa" ‖ …` and the two `a`s are forced, not a coincidence of the vectors.
+        // CIP-37 fixes the version byte at `0x00`, and a key-derived address has its leading four
+        // bits forced to `0001`, so the first ten bits of the payload are always `00000 00000`,
+        // which is `CHARSET[0]` twice. The third character is where the key starts to show: it
+        // carries the `01` that remains of the type nibble plus three key bits. A contract address
+        // would render `ac…` here, which is why the second character is worth pinning.
+        coins::FamilyParams::Conflux { hrp, .. } => Leading::Forced(format!("{hrp}:aa")),
         // EIP-55 renders a literal `0x` before the twenty checksummed hex bytes.
         coins::FamilyParams::Ethereum => Leading::Forced("0x".to_string()),
         // `base58check(version ‖ HASH160(pubkey))` = `base58(version ‖ 20 free bytes ‖ 4 checksum
