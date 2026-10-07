@@ -113,9 +113,10 @@ const RATE: usize = 136;
 
 /// XOR a 136-byte (rate-sized) block into the first 17 state lanes (little-endian).
 fn xor_rate_block(state: &mut [u64; 25], block: &[u8; RATE]) {
-    for (i, chunk) in block.chunks_exact(8).enumerate() {
-        // `chunks_exact(8)` on a 136-byte array yields exactly 8-byte slices.
-        state[i] ^= u64::from_le_bytes(chunk.try_into().unwrap());
+    // `as_chunks` yields `&[u8; 8]` directly, so the lane load needs no fallible conversion.
+    // RATE is 136, a multiple of 8, so the remainder half of the pair is empty by construction.
+    for (i, lane) in block.as_chunks::<8>().0.iter().enumerate() {
+        state[i] ^= u64::from_le_bytes(*lane);
     }
 }
 

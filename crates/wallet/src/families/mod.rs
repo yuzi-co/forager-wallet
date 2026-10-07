@@ -1,4 +1,5 @@
 pub(crate) mod alephium;
+pub(crate) mod conflux;
 pub(crate) mod cryptonote;
 pub(crate) mod ergo;
 pub(crate) mod ethereum;

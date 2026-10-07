@@ -57,6 +57,7 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `rvn` | Ravencoin | P2PKH | `R…` | `m/44'/175'` |
 | `firo` | Firo | P2PKH | `a…` (most keys) | `m/44'/136'` |
 | `mewc` | Meowcoin | P2PKH | `M…` | `m/44'/1669'` |
+| `evr` | Evrmore | P2PKH | `E…` | — |
 | `kad` | Kadikama | P2PKH | `K…` | — |
 | `zec` | Zcash (transparent) | P2PKH | `t1…` | `m/44'/133'` |
 | `btg` | Bitcoin Gold | P2PKH | `G…` | `m/44'/156'` |
@@ -68,6 +69,7 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `ubq` | Ubiq | Ethereum | `0x…` | `m/44'/108'` |
 | `ethw` | EthereumPoW | Ethereum | `0x…` | — |
 | `octa` | OctaSpace | Ethereum | `0x…` | — |
+| `cfx` | Conflux | Conflux Core Space (CIP-37) | `cfx:aa…` | — |
 | `xmr` | Monero | CryptoNote | `4…` | — |
 | `zeph` | Zephyr | CryptoNote | `ZEPHYR…` | — |
 | `sal` | Salvium | CryptoNote | `SaLv…` | — |
@@ -103,6 +105,19 @@ Four rows need a word of explanation:
 
 **Testnet.** `--testnet` works where the coin defines one. `--legacy` renders the base58 form for a
 SegWit-default coin (`btc`, `ltc`, `vtc`, `scash`, `alpha`).
+
+**Evrmore has no SLIP-44 coin type, so it has no `--hd` path.** Evrmore is a Ravencoin fork that
+changed only the address version byte (33, rendering `E…`) and kept Ravencoin's WIF byte. SLIP-44
+registers Ravencoin as 175 and Meowcoin as 1669 but lists no Evrmore row, so there is no standard
+derivation path to offer. A single key is generated and printed as a WIF, like any other P2PKH row.
+
+**Conflux has two address spaces, and this is the mining one.** A Conflux key has both a Core Space
+address, `cfx:aa…`, and an eSpace address, `0x…`, and the two are different payout targets. Mining
+rewards are paid in Core Space, and a Conflux pool rejects the eSpace spelling of the same key, so
+`cfx` generates and detects only the Core Space form. The derivation is Ethereum's keccak160 with
+the leading four bits forced to `0001`, which is how Conflux marks a user address as distinct from
+a contract or a builtin; the encoding is the CashAddr checksum under CIP-37's own base32 alphabet.
+The network prefix is part of the checksum, so a mainnet address does not decode as a testnet one.
 
 **Kadikama runs SegWit, but pays out in base58.** Kadikama Core activates SegWit at height 0 and
 Taproot from genesis, so a `kad1…` address is valid on the chain. `kad` is nonetheless registered
@@ -204,6 +219,7 @@ token's `--legacy` form and its WIF inherit the same assumption.
 --coin cryptonote:net=<int>[,net_test=<int>]
 --coin kaspa:prefix=<str>
 --coin ethereum:
+--coin conflux:prefix=<str>
 --coin ergo:
 --coin alephium:
 --coin xdag:

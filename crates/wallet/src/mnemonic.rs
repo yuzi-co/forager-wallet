@@ -38,8 +38,9 @@ pub(crate) fn monero_25(spend_secret: &[u8; 32]) -> [String; 25] {
     let n = WORDS.len() as u32; // 1626
     let mut words: Vec<&'static str> = Vec::with_capacity(25);
 
-    for chunk in spend_secret.chunks_exact(4) {
-        let x = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    // A 32-byte secret is eight whole 4-byte groups, so the remainder is empty by construction.
+    for word in spend_secret.as_chunks::<4>().0 {
+        let x = u32::from_le_bytes(*word);
         let w1 = x % n;
         let w2 = (x / n + w1) % n;
         let w3 = (x / n / n + w2) % n;

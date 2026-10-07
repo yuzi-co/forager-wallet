@@ -36,9 +36,13 @@ pub fn decode(s: &str) -> Option<Vec<u8>> {
     if !bytes.len().is_multiple_of(2) {
         return None;
     }
+    // The length check above rules out a trailing half-byte, so the remainder is empty and
+    // destructuring each `&[u8; 2]` replaces the two indexing operations.
     bytes
-        .chunks_exact(2)
-        .map(|pair| Some(nibble(pair[0])? << 4 | nibble(pair[1])?))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[hi, lo]| Some(nibble(hi)? << 4 | nibble(lo)?))
         .collect()
 }
 

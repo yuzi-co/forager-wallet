@@ -340,3 +340,104 @@ fn every_generated_kad_address_round_trips_through_detection() {
         }
     }
 }
+
+/// Every Conflux address the generator emits round-trips through detection, on both networks, and
+/// no single-character corruption of one does.
+///
+/// Two things make this worth asserting over the generator rather than over fixed vectors.
+///
+/// The first is that Conflux and Ethereum share a key, a curve and a hash, and differ only in the
+/// encoding, so a classifier can plausibly answer one for the other. Mining pays out to Core
+/// Space, so an eSpace `0x…` address is a different payout target and the confusion would be
+/// silent. Each generated address is therefore checked against `Family::Ethereum` too.
+///
+/// The second is that the network prefix is folded into the checksum. A mainnet address must
+/// therefore fail to decode under the testnet prefix, which is what stops a prefix swap from
+/// looking like a valid address on the wrong network.
+#[test]
+fn every_generated_conflux_address_round_trips_through_detection() {
+    for i in 1u32..=48 {
+        let secret = format!("{i:064x}");
+        for net in [Network::Mainnet, Network::Testnet] {
+            let w = forager_wallet::address_from_secret("cfx", &secret, net).unwrap();
+            let want_prefix = match net {
+                Network::Mainnet => "cfx:",
+                Network::Testnet => "cfxtest:",
+            };
+            assert!(
+                w.address.starts_with(want_prefix),
+                "key {secret} on {net:?}: {}",
+                w.address
+            );
+            // The version byte is fixed and the type nibble is forced, so every derived address
+            // renders two `a`s before any key-dependent character.
+            assert!(
+                w.address.starts_with(&format!("{want_prefix}aa")),
+                "key {secret}: {} is not a type.user address",
+                w.address
+            );
+            assert_eq!(
+                detect_family(&w.address),
+                Some(Family::Conflux),
+                "key {secret}: {}",
+                w.address
+            );
+            assert_eq!(
+                check(&w.address, Family::Conflux),
+                Verdict::Ok,
+                "{}",
+                w.address
+            );
+            // Not Ethereum, and Ethereum's form of the same key is not Conflux.
+            assert!(matches!(
+                check(&w.address, Family::Ethereum),
+                Verdict::Mismatch { .. }
+            ));
+
+            // Swapping the network prefix must break the checksum rather than yield the other
+            // network's address.
+            let (_, body) = w.address.split_once(':').unwrap();
+            let swapped = match net {
+                Network::Mainnet => format!("cfxtest:{body}"),
+                Network::Testnet => format!("cfx:{body}"),
+            };
+            assert_ne!(
+                detect_family(&swapped),
+                Some(Family::Conflux),
+                "prefix swap of {} still detected",
+                w.address
+            );
+
+            // Every single-character corruption of the payload must stop being a confident
+            // Conflux address. Walking the whole body covers the eight checksum characters too.
+            let alt = |c: u8| if c == b'a' { b'b' } else { b'a' };
+            for pos in 0..body.len() {
+                let mut bad = body.as_bytes().to_vec();
+                bad[pos] = alt(bad[pos]);
+                let bad = format!("{want_prefix}{}", String::from_utf8(bad).unwrap());
+                assert_ne!(
+                    detect_family(&bad),
+                    Some(Family::Conflux),
+                    "corruption at {pos} of {} still detected",
+                    w.address
+                );
+            }
+        }
+    }
+}
+
+/// Every Evrmore address the generator emits is a base58 P2PKH address detection reads back, and
+/// it renders the `E…` form the chain's own comment describes.
+#[test]
+fn every_generated_evrmore_address_round_trips_through_detection() {
+    for i in 1u32..=64 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("evr", &secret, Network::Mainnet).unwrap();
+        assert!(w.address.starts_with('E'), "key {secret}: {}", w.address);
+        assert_eq!(detect_family(&w.address), Some(Family::P2pkh));
+        assert_eq!(check(&w.address, Family::P2pkh), Verdict::Ok);
+    }
+    // The PRIV1 row is the KAT `lib.rs` pins, repeated here through the detection seam.
+    let w = forager_wallet::address_from_secret("evr", PRIV1, Network::Mainnet).unwrap();
+    assert_eq!(w.address, "ETqB3jj7o29g8cnr2d6qpzPwtkwgTuXt3Q");
+}

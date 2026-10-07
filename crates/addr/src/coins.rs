@@ -38,6 +38,15 @@ pub enum Family {
     /// SHA-256 checksum instead of Base58Check's double. No version byte, no prefix,
     /// network-agnostic; always 48 characters.
     Warthog,
+    /// Conflux Core Space (CIP-37): the keccak160 of the uncompressed pubkey with its leading four
+    /// bits forced to `type.user`, encoded with the CashAddr checksum under CIP-37's own base32
+    /// alphabet as `<prefix>:<payload><8-char checksum>`.
+    ///
+    /// Not [`Family::Ethereum`], although the key and the hash are the same. Conflux has two
+    /// address spaces: eSpace takes the `0x…` form, and Core Space — the one mining pays out to —
+    /// takes this one. A pool that wants a Core Space address rejects the eSpace spelling of the
+    /// same key, so the two cannot share a family.
+    Conflux,
 }
 
 /// Per-coin parameters that parameterise the address-derivation algorithm.
@@ -131,6 +140,17 @@ pub enum FamilyParams {
     /// Warthog has no per-coin parameters — the address is network-agnostic (no version byte, no
     /// prefix). The node uses the same encoding on testnet.
     Warthog,
+    /// Conflux Core Space: the network prefix that precedes the `:`, per network.
+    ///
+    /// CIP-37 fixes the version byte at `0x00` for every address it defines, so the prefix is the
+    /// only per-network parameter. It is part of the checksum, which is what makes a mainnet
+    /// address fail to decode as a testnet one.
+    Conflux {
+        /// Mainnet network prefix, e.g. `cfx`.
+        hrp: &'static str,
+        /// Testnet network prefix, e.g. `cfxtest`.
+        hrp_testnet: &'static str,
+    },
 }
 
 impl FamilyParams {
@@ -148,6 +168,7 @@ impl FamilyParams {
             FamilyParams::Alephium => Family::Alephium,
             FamilyParams::Xdag => Family::Xdag,
             FamilyParams::Warthog => Family::Warthog,
+            FamilyParams::Conflux { .. } => Family::Conflux,
         }
     }
 
@@ -348,6 +369,25 @@ pub static COINS: &[CoinSpec] = &[
             compressed: true,
         },
     },
+    // EVR: chainparams PUBKEY_ADDRESS=33(0x21), SECRET_KEY=128(0x80)
+    //      testnet: PUBKEY_ADDRESS=111(0x6f)
+    //      Source: EvrmoreOrg/Evrmore src/chainparams.cpp, whose own comment on the mainnet line
+    //      reads "produces 'E' as first char of address after base58 encoding".
+    //      Evrmore is a Ravencoin fork and keeps Ravencoin's WIF byte; it changed only the
+    //      address version. `hd_slip44` is None because EVR has no registered SLIP-44 coin type
+    //      (checked against satoshilabs/slips slip-0044.md, which lists RVN 175 and MEWC 1669 but
+    //      no Evrmore row), so there is no standard path to offer `--hd` at.
+    CoinSpec {
+        ticker: "evr",
+        name: "Evrmore",
+        hd_slip44: None,
+        params: FamilyParams::P2pkh {
+            version: &[0x21],
+            version_testnet: Some(&[0x6f]),
+            wif: 0x80,
+            compressed: true,
+        },
+    },
     // KAD: chainparams PUBKEY_ADDRESS=45(0x2d), SECRET_KEY=176(0xb0)
     //      testnet: PUBKEY_ADDRESS=46(0x2e), SECRET_KEY=239(0xef)
     //      Source: kadikamateam/kadikama (MIT), src/chainparams.cpp — Kadikama Core is a Litecoin
@@ -386,6 +426,21 @@ pub static COINS: &[CoinSpec] = &[
         name: "Ethereum",
         hd_slip44: Some(60), // SLIP-44: satoshilabs/slips
         params: FamilyParams::Ethereum,
+    },
+    // ---- Conflux Core Space ----
+    // CFX: network prefixes `cfx` (mainnet) and `cfxtest` (testnet 1).
+    //      Source: Conflux-Chain/CIPs CIPs/cip-37.md for the encoding and the prefixes, and
+    //      Conflux-Chain/js-conflux-sdk src/util/sign.js `publicKeyToAddress` for the derivation.
+    //      `hd_slip44` is None even though SLIP-44 registers CFX as 503: `--hd` is offered only
+    //      for base58 P2PKH rows, because that is the only path `hd_parts` can describe.
+    CoinSpec {
+        ticker: "cfx",
+        name: "Conflux",
+        hd_slip44: None,
+        params: FamilyParams::Conflux {
+            hrp: "cfx",
+            hrp_testnet: "cfxtest",
+        },
     },
     // ---- CryptoNote family ----
     // XMR: mainnet network byte 18 (addresses start with '4'), testnet 53.
@@ -738,6 +793,16 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         caveat: None,
     },
     TokenSyntax {
+        family: "conflux",
+        keys: &["prefix"],
+        flags: &[],
+        syntax: "conflux:prefix=<str>",
+        example: "conflux:prefix=cfx",
+        caveat: Some(
+            "The prefix is part of the checksum, so a wrong one mints an address that decodes\n             on no network. Conflux's own prefixes are `cfx`, `cfxtest` and `net<id>`.",
+        ),
+    },
+    TokenSyntax {
         family: "ergo",
         keys: &[],
         flags: &[],
@@ -866,6 +931,16 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
             hrp: intern(req("hrp")?.to_string()),
             hrp_testnet: None,
         },
+        // A custom row has no second network to name, so the testnet prefix is the mainnet one.
+        // The generator's `--testnet` then mints the same address, which is correct for a token
+        // that was given exactly one prefix.
+        "conflux" => {
+            let hrp = intern(req("prefix")?.to_string());
+            FamilyParams::Conflux {
+                hrp,
+                hrp_testnet: hrp,
+            }
+        }
         "cryptonote" => FamilyParams::CryptoNote {
             network_byte: parse_uint(req("net")?)?,
             network_byte_testnet: match get("net_test") {
@@ -1270,6 +1345,7 @@ mod tests {
                 FamilyParams::Alephium => Family::Alephium,
                 FamilyParams::Xdag => Family::Xdag,
                 FamilyParams::Warthog => Family::Warthog,
+                FamilyParams::Conflux { .. } => Family::Conflux,
             };
             assert_eq!(spec.family(), expected, "{}", spec.ticker);
         }

@@ -177,9 +177,10 @@ pub fn ripemd160(data: &[u8]) -> [u8; 20] {
     msg.extend(std::iter::repeat_n(0u8, pad_zeros));
     msg.extend_from_slice(&bit_len.to_le_bytes());
 
-    // Process each 64-byte block.
-    for chunk in msg.chunks_exact(64) {
-        let block: &[u8; 64] = chunk.try_into().unwrap();
+    // Process each 64-byte block. The padding above brings the length to a multiple of 64, so
+    // the remainder is empty, and `as_chunks` hands `compress` the `&[u8; 64]` it wants without a
+    // fallible conversion.
+    for block in msg.as_chunks::<64>().0 {
         compress(&mut h, block);
     }
 
