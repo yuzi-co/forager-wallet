@@ -1971,3 +1971,14 @@ repository are recorded instead.
 |---|---|---|---|
 | `blake2b_simd` | 1.0.4 | MIT | https://github.com/oconnor663/blake2_simd |
 
+
+## Source ported from other projects
+
+Not a crate dependency, so `cargo metadata` does not list it.
+
+| Project | Commit | License | What | Where |
+|---|---|---|---|---|
+| [Parano1d](https://git.parano1d.org/ignotusnemo/parano1d) | `52938433` | Apache-2.0 | Poseidon2b round constants, MDS entries and tower/flat change-of-basis tables; the address and master-to-spend derivations | `crates/wallet/src/poseidon2b/`, `crates/wallet/src/families/noid.rs` |
+
+Apache-2.0's full text is in [`LICENSE`](LICENSE). The attribution notices it requires, Parano1d's
+own and the hekate-math and binius64 notices it carries, are reproduced in [`NOTICE`](NOTICE).

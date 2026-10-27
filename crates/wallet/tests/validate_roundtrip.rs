@@ -298,6 +298,61 @@ fn every_generated_warthog_address_round_trips_through_detection() {
     }
 }
 
+/// Every Parano1d address the generator emits round-trips through detection, and no
+/// single-character corruption of one does.
+///
+/// The `o1` prefix is a constant, so the bech32m checksum over the HRP and the 32-byte payload is
+/// what detection answers on. The corruption half walks every position, the HRP and separator
+/// included, with a substitute from the bech32 alphabet, so each corrupted string is still made of
+/// legal characters and only the checksum can reject it.
+#[test]
+fn every_generated_noid_address_round_trips_through_detection() {
+    // The reference key store's vector (`families/noid.rs`, `MASTER_VECTORS`), so a change to
+    // either side shows up here.
+    let w = forager_wallet::address_from_secret(
+        "noid",
+        "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a",
+        Network::Mainnet,
+    )
+    .unwrap();
+    assert_eq!(
+        w.address,
+        "o1vckl9ly5walhz8p5yzze98s5t6y6ruaeck236npdvx0dkxfcj25sl74e5v"
+    );
+    assert_eq!(detect_family(&w.address), Some(Family::Noid));
+
+    for i in 0u32..32 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("noid", &secret, Network::Mainnet).unwrap();
+        assert_eq!(w.address.len(), 60, "key {secret}: {}", w.address);
+        assert!(w.address.starts_with("o1"), "key {secret}: {}", w.address);
+        assert_eq!(
+            detect_family(&w.address),
+            Some(Family::Noid),
+            "key {secret}: {}",
+            w.address
+        );
+        assert_eq!(
+            check(&w.address, Family::Noid),
+            Verdict::Ok,
+            "{}",
+            w.address
+        );
+
+        for pos in 0..w.address.len() {
+            let mut bad = w.address.clone().into_bytes();
+            bad[pos] = if bad[pos] == b'q' { b'p' } else { b'q' };
+            let bad = String::from_utf8(bad).unwrap();
+            assert_ne!(
+                detect_family(&bad),
+                Some(Family::Noid),
+                "corruption at {pos} of {} still detected",
+                w.address
+            );
+        }
+    }
+}
+
 /// Every KAD address the generator emits classifies as the form the live chain issues.
 ///
 /// Kadikama is the coin table's one row where the chain params and the network's practice

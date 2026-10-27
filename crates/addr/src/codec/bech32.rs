@@ -109,6 +109,24 @@ pub enum Variant {
 /// constants, so `Bech32m` coming back from a witness-v0 address means the address is wrong, not
 /// that this function was lenient. Binding version to variant is again the caller's rule.
 pub fn verify(s: &str) -> Option<(String, Variant)> {
+    checked(s).map(|(hrp, variant, _)| (hrp, variant))
+}
+
+/// Decode a bech32 / bech32m string whose data part is a plain byte string, with no witness
+/// version in front of it: the HRP (lower-cased), the checksum variant, and the payload bytes.
+///
+/// Everything [`verify`] checks is checked here, and on top of it the 5-to-8 conversion with
+/// [`convertbits_5_to_8`]'s strict padding rule, so each payload has exactly one spelling. This is
+/// the layout a Parano1d `o1…` address uses (`bech32::encode::<Bech32m>(hrp, bytes)` in the
+/// reference). It is not the SegWit layout, whose first data character is a witness version.
+pub fn decode(s: &str) -> Option<(String, Variant, Vec<u8>)> {
+    let (hrp, variant, data) = checked(s)?;
+    let bytes = convertbits_5_to_8(&data)?;
+    Some((hrp, variant, bytes))
+}
+
+/// [`verify`], also returning the 5-bit data part with the six checksum characters removed.
+fn checked(s: &str) -> Option<(String, Variant, Vec<u8>)> {
     // Mixed case is invalid per BIP173 "Uppercase/lowercase": "Decoders MUST NOT accept strings
     // where some characters are uppercase and some are lowercase".
     let has_upper = s.bytes().any(|b| b.is_ascii_uppercase());
@@ -146,11 +164,13 @@ pub fn verify(s: &str) -> Option<(String, Variant)> {
     }
     let mut values = hrp_expand(hrp);
     values.extend_from_slice(&data);
-    match polymod(&values) {
-        BECH32_CONST => Some((hrp.to_string(), Variant::Bech32)),
-        BECH32M_CONST => Some((hrp.to_string(), Variant::Bech32m)),
-        _ => None,
-    }
+    let variant = match polymod(&values) {
+        BECH32_CONST => Variant::Bech32,
+        BECH32M_CONST => Variant::Bech32m,
+        _ => return None,
+    };
+    data.truncate(data.len() - 6);
+    Some((hrp.to_string(), variant, data))
 }
 
 /// Encode a SegWit program as a bech32 (v0) or bech32m (v1+) address.
@@ -165,9 +185,19 @@ pub fn encode(hrp: &str, witver: u8, program: &[u8]) -> String {
     };
     let mut data = vec![witver];
     data.extend(convertbits_8_to_5(program));
+    encode_data(hrp, &data, xor_const)
+}
 
+/// Encode a plain byte string as bech32m under `hrp`, with no witness version: the inverse of
+/// [`decode`] for a [`Variant::Bech32m`] string.
+pub fn encode_bech32m_bytes(hrp: &str, bytes: &[u8]) -> String {
+    encode_data(hrp, &convertbits_8_to_5(bytes), BECH32M_CONST)
+}
+
+/// `hrp ‖ '1' ‖ data ‖ checksum`, with the checksum constant chosen by the caller.
+fn encode_data(hrp: &str, data: &[u8], xor_const: u32) -> String {
     let mut values = hrp_expand(hrp);
-    values.extend_from_slice(&data);
+    values.extend_from_slice(data);
     values.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
     let chksum = polymod(&values) ^ xor_const;
     let checksum: Vec<u8> = (0..6)
@@ -693,5 +723,40 @@ mod tests {
             "an83characterlonghumanreadablepartthatcontainsthetheexcludedcharactersbioandnumber11sg7hg6"
         )
         .is_some());
+    }
+
+    /// The version-less byte layout, against an address the Parano1d reference itself pins:
+    /// `ignotusnemo/parano1d@52938433` `noid_chain/src/consensus/development_allocation.rs`
+    /// (`mainnet_fund_addresses_are_canonical`). The payload is what the reference's own
+    /// `Address::parse` returned for it in the `kat-addr` harness.
+    #[test]
+    fn plain_byte_layout_round_trips_a_reference_address() {
+        const ADDR: &str = "o1r3djxaz54k47kr54x76cwqkhl6xqucescv943m5m8uvc5w6x7euqct3h07";
+        let payload = hex32("1c5b237454adabeb0e9537b58702d7fe8c0e6330c30b58ee9b3f198a3b46f678");
+        assert_eq!(super::encode_bech32m_bytes("o", &payload), ADDR);
+        assert_eq!(
+            super::decode(ADDR),
+            Some(("o".to_string(), Variant::Bech32m, payload.to_vec()))
+        );
+        // Upper case is the same string; the HRP comes back lower-cased.
+        assert_eq!(
+            super::decode(&ADDR.to_ascii_uppercase()),
+            Some(("o".to_string(), Variant::Bech32m, payload.to_vec()))
+        );
+    }
+
+    /// `decode` keeps `convertbits_5_to_8`'s padding rule: a string whose checksum is right but
+    /// whose last character carries a set padding bit is a second spelling of the same bytes, and
+    /// is refused. The string is the one the reference's `bech32 0.11.1` decoder accepted in the
+    /// `kat-addr` harness, so this is a place where the classifier is deliberately stricter.
+    #[test]
+    fn decode_rejects_nonzero_padding() {
+        assert!(
+            super::verify("o1r3djxaz54k47kr54x76cwqkhl6xqucescv943m5m8uvc5w6x7eup9a9zjv").is_some()
+        );
+        assert_eq!(
+            super::decode("o1r3djxaz54k47kr54x76cwqkhl6xqucescv943m5m8uvc5w6x7eup9a9zjv"),
+            None
+        );
     }
 }

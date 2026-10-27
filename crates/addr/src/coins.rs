@@ -47,7 +47,20 @@ pub enum Family {
     /// takes this one. A pool that wants a Core Space address rejects the eSpace spelling of the
     /// same key, so the two cannot share a family.
     Conflux,
+    /// Parano1d (NOID): `bech32m("o", H)`, where `H` is a 32-byte Poseidon2b digest of the spend
+    /// secret over GF(2^128). No curve, no public key and no version byte: the address is a hash of
+    /// the secret itself, and ownership is proved in zero knowledge rather than by a signature.
+    /// Always 60 characters, `o1…`, network-agnostic.
+    Noid,
 }
+
+/// Human-readable part of a Parano1d (NOID) address. The reference node has exactly one, and uses it
+/// on every network: `ignotusnemo/parano1d@52938433` `noid_poseidon2b/src/primitives.rs`
+/// `ADDRESS_HRP`.
+pub const NOID_HRP: &str = "o";
+
+/// Payload bytes in a Parano1d (NOID) address: one Poseidon2b digest, two GF(2^128) lanes.
+pub const NOID_ADDRESS_LEN: usize = 32;
 
 /// Per-coin parameters that parameterise the address-derivation algorithm.
 ///
@@ -151,6 +164,9 @@ pub enum FamilyParams {
         /// Testnet network prefix, e.g. `cfxtest`.
         hrp_testnet: &'static str,
     },
+    /// Parano1d has no per-coin parameters: the HRP is the protocol constant [`NOID_HRP`] on every
+    /// network.
+    Noid,
 }
 
 impl FamilyParams {
@@ -169,6 +185,7 @@ impl FamilyParams {
             FamilyParams::Xdag => Family::Xdag,
             FamilyParams::Warthog => Family::Warthog,
             FamilyParams::Conflux { .. } => Family::Conflux,
+            FamilyParams::Noid => Family::Noid,
         }
     }
 
@@ -584,6 +601,19 @@ pub static COINS: &[CoinSpec] = &[
         hd_slip44: None,
         params: FamilyParams::Warthog,
     },
+    // ---- Parano1d family ----
+    // Parano1d (NOID): address = bech32m("o", Poseidon2b_ADDRFIX(spend_secret)), a 32-byte hash of
+    // the secret with no curve and no version byte. The wallet holds one 32-byte master secret and
+    // derives spend secret `n` from it; the address the official wallet shows first is index 0.
+    // Source: ignotusnemo/parano1d@52938433 (Apache-2.0) noid_poseidon2b/src/primitives.rs
+    // (`derive_address`, `ADDRESS_HRP`, `parse_address`) + noid_node/src/wallet/keystore.rs
+    // (`MasterSecret::derive_spend_secret`).
+    CoinSpec {
+        ticker: "noid",
+        name: "Parano1d",
+        hd_slip44: None,
+        params: FamilyParams::Noid,
+    },
     // SCASH ("Satoshi Cash", RandomX): address bytes left BYTE-IDENTICAL to Bitcoin — P2PKH
     // 0x00, WIF 0x80, bech32 HRP "bc"; testnet 0x6f/"tb". So a SCASH address is indistinguishable
     // from a BTC one (same encoder, same bytes).  Source: scashnetwork/scash (MIT),
@@ -834,6 +864,14 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         example: "warthog:",
         caveat: None,
     },
+    TokenSyntax {
+        family: "noid",
+        keys: &[],
+        flags: &[],
+        syntax: "noid:",
+        example: "noid:",
+        caveat: None,
+    },
 ];
 
 /// The [`TokenSyntax::caveat`] for a runtime coin token's family, or `None` if it has none.
@@ -958,6 +996,7 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
         "alephium" => FamilyParams::Alephium,
         "xdag" => FamilyParams::Xdag,
         "warthog" => FamilyParams::Warthog,
+        "noid" => FamilyParams::Noid,
         // Unreachable while `TOKEN_GRAMMAR` and this match list the same families — the lookup above
         // already rejected any name the grammar does not carry.  Report it instead of panicking, so a
         // grammar row added without an arm here degrades to a clear message; the
@@ -1346,6 +1385,7 @@ mod tests {
                 FamilyParams::Xdag => Family::Xdag,
                 FamilyParams::Warthog => Family::Warthog,
                 FamilyParams::Conflux { .. } => Family::Conflux,
+                FamilyParams::Noid => Family::Noid,
             };
             assert_eq!(spec.family(), expected, "{}", spec.ticker);
         }

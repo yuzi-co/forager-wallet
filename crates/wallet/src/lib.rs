@@ -37,6 +37,7 @@ mod families;
 mod hash;
 pub mod hd;
 mod mnemonic;
+mod poseidon2b;
 mod ripemd160;
 mod secret;
 // Two word lists, deliberately named so they cannot be confused: `wordlist_en` is Monero's
@@ -198,6 +199,13 @@ pub fn address_from_secret_kind(
     legacy: bool,
 ) -> Result<Wallet, WalletError> {
     let spec = resolve_spec(coin)?;
+    // A Parano1d master secret is not a secp256k1 scalar: every 32-byte string is one, the zero
+    // string included, so no range check applies. It is read the way the official import reads it.
+    if spec.family() == Family::Noid {
+        let master =
+            families::noid::parse_master_secret(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
+        return Ok(noid_wallet(&spec, &master));
+    }
     let priv32 = parse_secret(secret_hex)?;
     let d = curves::secp256k1::scalar_in_range(&priv32)?;
     build_wallet(&spec, &d, &priv32, net, legacy)
@@ -206,6 +214,15 @@ pub fn address_from_secret_kind(
 /// Generate a fresh payout [`Wallet`] for `coin` on `net` from OS entropy.
 pub fn generate(coin: &str, net: Network) -> Result<Wallet, WalletError> {
     let spec = resolve_spec(coin)?;
+    if spec.family() == Family::Noid {
+        // 32 uniform bytes, as the official wallet's "Create a new 256-bit key" draws them
+        // (`Keystore::create_plain`). No rejection sampling: there is no range to sample into.
+        let mut master = [0u8; 32];
+        getrandom::getrandom(&mut master).map_err(|_| WalletError::Entropy)?;
+        let w = noid_wallet(&spec, &master);
+        zeroize::Zeroize::zeroize(&mut master);
+        return Ok(w);
+    }
     loop {
         let mut buf = [0u8; 32];
         getrandom::getrandom(&mut buf).map_err(|_| WalletError::Entropy)?;
@@ -237,6 +254,20 @@ fn build_wallet(
         secret_hex: hexbytes::encode(&canon_priv),
         secret_std,
     })
+}
+
+/// Assemble the [`Wallet`] for a Parano1d master secret. The address comes from the same
+/// `families::noid::address` that [`dispatch`]'s `Noid` arm calls, and the secret is the master
+/// secret as the 64 lowercase hex characters the official wallet exports and imports.
+/// Parano1d addresses are network-agnostic, so there is no `net` to pass.
+fn noid_wallet(spec: &coins::CoinSpec, master: &[u8; 32]) -> Wallet {
+    Wallet {
+        coin: spec.ticker,
+        address: families::noid::address(master),
+        privkey: *master,
+        secret_hex: hexbytes::encode(master),
+        secret_std: SecretStd::RawHex(hexbytes::encode(master)),
+    }
 }
 
 /// Select the mainnet or testnet form of a per-network parameter.
@@ -290,6 +321,11 @@ pub(crate) fn dispatch(
         coins::FamilyParams::Alephium => families::alephium::address(d),
         coins::FamilyParams::Xdag => families::xdag::address(d),
         coins::FamilyParams::Warthog => families::warthog::address(d),
+        // Parano1d is network-agnostic too, and has no curve: `d` is unused, and the input bytes
+        // are the wallet master secret. The public entry points route around this arm (see
+        // `noid_wallet`) so that a master secret outside the secp256k1 range still derives; this
+        // arm keeps `dispatch` total and agrees with them byte for byte.
+        coins::FamilyParams::Noid => families::noid::address(priv32),
 
         coins::FamilyParams::SegwitV0 {
             hrp,
@@ -660,6 +696,7 @@ mod tests {
             ("ergo:", "erg"),
             ("alephium:", "alph"),
             ("xdag:", "xdag"),
+            ("noid:", "noid"),
         ] {
             let t = address_from_secret(token, PRIV1, Network::Mainnet).unwrap();
             let r = address_from_secret(ticker, PRIV1, Network::Mainnet).unwrap();
@@ -1050,6 +1087,73 @@ mod tests {
 
         let w_testnet = address_from_secret("alph", priv_hex, Network::Testnet).unwrap();
         assert_eq!(w_testnet.address, w.address);
+    }
+
+    /// NOID (Parano1d) through the public seam. The vector is the reference node's own key store
+    /// (see `families::noid::tests::MASTER_VECTORS`): this master secret, imported into the official
+    /// wallet, shows this address as address 0. The test pins the row, the routing around the
+    /// secp256k1 range check, the printed secret and network agnosticism.
+    #[test]
+    fn noid_master_secret_through_the_public_seam() {
+        const MASTER: &str = "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a";
+        const ADDR: &str = "o1vckl9ly5walhz8p5yzze98s5t6y6ruaeck236npdvx0dkxfcj25sl74e5v";
+        let w = address_from_secret("noid", MASTER, Network::Mainnet).unwrap();
+        assert_eq!(w.address, ADDR);
+        assert_eq!(w.coin, "noid");
+        assert_eq!(w.secret_hex, MASTER);
+        match &w.secret_std {
+            SecretStd::RawHex(s) => assert_eq!(s, MASTER),
+            _ => panic!("expected SecretStd::RawHex"),
+        }
+        // Network-agnostic: the reference has one HRP.
+        let t = address_from_secret("noid", MASTER, Network::Testnet).unwrap();
+        assert_eq!(t.address, ADDR);
+        // The official import's normalisation: upper case and whitespace are the same secret.
+        let spaced = "D008285E 7BBC3FC1 374E1297 8CBB5A43 4A5E9E81 29E26B88 3761F6EC 6F2B385A";
+        assert_eq!(
+            address_from_secret("noid", spaced, Network::Mainnet)
+                .unwrap()
+                .address,
+            ADDR
+        );
+        // `dispatch`'s arm agrees with the routed path.
+        let priv32 = hex32(MASTER);
+        let d = curves::secp256k1::scalar_in_range(&priv32).unwrap();
+        let spec = *coins::lookup("noid").unwrap();
+        let (addr, _, canon) = dispatch(&spec, &d, &priv32, Network::Mainnet, false).unwrap();
+        assert_eq!(addr, ADDR);
+        assert_eq!(canon, priv32);
+    }
+
+    /// The all-zero master secret is a valid Parano1d wallet (the official import takes any 64 hex
+    /// characters), and it is outside the secp256k1 scalar range. It must derive, not fail with
+    /// `PrivKeyOutOfRange`; so must a value at or above the curve order.
+    #[test]
+    fn noid_accepts_master_secrets_outside_the_secp256k1_range() {
+        let zero = "0".repeat(64);
+        let w = address_from_secret("noid", &zero, Network::Mainnet).unwrap();
+        assert_eq!(
+            w.address,
+            "o1rujxarvejc9jhfgwnh7hxf9kg2s94hhky2hrsjf4hwfep543y7lsl4x52t"
+        );
+        let all_ff = "f".repeat(64);
+        assert!(address_from_secret("noid", &all_ff, Network::Mainnet).is_ok());
+        // Not hex, or not 32 bytes: refused.
+        assert_eq!(
+            address_from_secret("noid", &"0".repeat(63), Network::Mainnet).err(),
+            Some(WalletError::BadPrivKeyHex)
+        );
+    }
+
+    #[test]
+    fn noid_generate_round_trips() {
+        let w = generate("noid", Network::Mainnet).unwrap();
+        assert!(w.address.starts_with("o1"), "{}", w.address);
+        assert_eq!(w.address.len(), 60);
+        assert_eq!(w.secret_hex.len(), 64);
+        let again = address_from_secret("noid", &w.secret_hex, Network::Mainnet).unwrap();
+        assert_eq!(again.address, w.address);
+        assert_eq!(detect_family(&w.address), Some(Family::Noid));
     }
 
     // ---- Zcash-family transparent P2PKH rows (single-key path) ----

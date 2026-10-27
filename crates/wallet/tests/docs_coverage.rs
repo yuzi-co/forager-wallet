@@ -336,6 +336,10 @@ fn leading_characters(spec: &coins::CoinSpec) -> Leading {
         // character is the high nibble of the first HASH160 byte, which is key-dependent across the
         // full `0`–`f` range. So nothing forces a prefix, and this is a property of the encoding
         // rather than a gap in the analysis.
+        // `bech32m("o", payload)`: the HRP verbatim and the separator, then the payload's 5-bit
+        // groups (`codec::bech32::encode_bech32m_bytes`). There is no witness version, so the
+        // first data character is already key-dependent: `o1` is all that is forced.
+        coins::FamilyParams::Noid => Leading::Forced(format!("{}1", coins::NOID_HRP)),
         coins::FamilyParams::Warthog => Leading::Undecided(
             "the address is bare hex of a key-dependent hash with no version byte or prefix, so \
              its first character is the high nibble of HASH160's first byte"

@@ -11,3 +11,27 @@ crates/wallet/src/ripemd160.rs is a clean-room RIPEMD-160 (ISO/IEC 10118-3)
 re-derived from the published specification. It is a copy of the module used by
 the closed-source Forager miner, and is not derived from any third-party
 implementation.
+
+crates/wallet/src/poseidon2b/ (the Poseidon2b permutation, sponge and GF(2^128)
+change-of-basis tables) and crates/wallet/src/families/noid.rs (the Parano1d
+master-secret and address derivation) contain constants and constructions
+ported from Parano1d, https://git.parano1d.org/ignotusnemo/parano1d, commit
+52938433, licensed under the Apache License, Version 2.0. The portable GF(2^128)
+multiply is Forager's own. Parano1d's NOTICE reads, in the part that applies:
+
+  Parano1d
+  Copyright 2026 Paranoid Zero
+  Designed and developed by Ignotus Nemo
+
+  Portions of the binary-field implementation are derived from hekate-math:
+  https://github.com/oumuamua-labs/hekate-math
+
+  hekate-math
+  Copyright 2026 Andrei Kochergin and Oumuamua Labs.
+
+  Portions of the field, multilinear-extension, sumcheck, and tensor-algebra
+  implementation are adapted from binius64:
+  https://github.com/binius-zk/binius64
+
+  Copyright (c) 2025 The Binius Developers
+  Copyright (c) 2025 Irreducible, Inc.
