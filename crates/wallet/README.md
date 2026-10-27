@@ -30,13 +30,18 @@ generate for a coin that is not in the table yet, with worked examples.
 **A wrong address means unspendable funds, and no software can undo that.** Verify, then mine.
 
 Every address family here is clean-room — re-derived from the published standard — and locked by a
-known-answer test. That proves the *scheme* is right. It does not prove *your* address is right.
-Only an independent re-derivation does that.
+known-answer test. The one exception is Parano1d (`noid`): it has no standard to re-derive from, so
+its Poseidon2b constants are copied from the project's Apache-2.0 reference node (see
+[`NOTICE`](NOTICE)) and its known-answer vectors were captured from that node's own key store. That
+proves the *scheme* is right. It does not prove *your* address is right. Only an independent
+re-derivation does that.
 
 1. Generate an address and back up the secret. It is printed once and never stored.
 2. Re-derive the same address from the same secret, in software that is not this tool:
    - single-key: any standard WIF importer;
-   - `--hd`: any standard BIP39 wallet, from the same mnemonic and the same path.
+   - `--hd`: any standard BIP39 wallet, from the same mnemonic and the same path;
+   - `noid`: the official Parano1d wallet, by importing the master secret ("Restore from existing
+     key"). Its first address must match.
 
    `forager-wallet restore` is a cheap first check, but it is **not independent** — it re-runs the
    same code that minted the address. Only other software proves the address.

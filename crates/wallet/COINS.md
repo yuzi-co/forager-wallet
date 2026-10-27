@@ -23,6 +23,7 @@ Run `forager-wallet list` for the live table — this file documents it, and a t
 | Alephium | base58(0x00 ‖ Blake2b256(compressed pubkey)), no checksum | secp256k1 |
 | XDAG | base58check(HASH160(pubkey)) with **no** version byte | secp256k1 |
 | Warthog | hex(HASH160(pubkey) ‖ SHA256(HASH160)[..4]) — single SHA-256, no version byte | secp256k1 |
+| Parano1d | bech32m("o", Poseidon2b(spend secret)), no witness version; spend secret 0 derived from a master secret | none |
 
 ## The coin table
 
@@ -80,8 +81,9 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `alph` | Alephium | Alephium | `1…` | — |
 | `xdag` | XDAG | XDAG | no fixed prefix | — |
 | `wart` | Warthog | Warthog | no fixed prefix | — |
+| `noid` | Parano1d | Parano1d | `o1…` | — |
 
-Four rows need a word of explanation:
+Five rows need a word of explanation:
 
 - **`scash`** — `bc1q…` is not a typo. Scash left Bitcoin's base58 and bech32 parameters unchanged,
   so a Scash address is byte-identical to the Bitcoin address for the same key, and no encoding can
@@ -95,6 +97,16 @@ Four rows need a word of explanation:
   hex with a **single**-SHA-256 checksum instead of base58check's double. Hex is fixed-width and
   positional, so every address is exactly 48 characters — but the first of them is the high nibble
   of a key-dependent hash byte, so it ranges over `0`–`f` and no prefix exists to document.
+- **`noid`** — the secret is a Parano1d wallet **master** secret, not a private key on a curve.
+  Parano1d has no curve and no public key: the address is a Poseidon2b hash of a spend secret, and
+  the wallet derives spend secret `n` from its one 32-byte master secret. The official wallet
+  imports only that master secret, as 64 hex characters, through "Restore from existing key" in the
+  GUI or `parano1d --import-wallet-secret` on stdin. The printed address is index 0, the one the
+  wallet shows first after an import. Any 32 bytes are a valid master secret, so `restore` takes the
+  hex form only (no WIF), with whitespace ignored as the official import ignores it. The address is
+  60 characters, `o1` plus 58 key-dependent characters, and is the same on every network. Source:
+  `ignotusnemo/parano1d@52938433` (Apache-2.0), `noid_node/src/wallet/keystore.rs` and
+  `noid_poseidon2b/src/primitives.rs`.
 - **`firo`** — the table's only `(most keys)` row. Version byte `0x52` puts the 25-byte payload
   astride the base58 boundary between digit 32 (`Z`) and digit 33 (`a`): the interval the payload
   can occupy lies 1.222% below that boundary and 98.778% above it, so 98.8% of keys render `a…` and
@@ -224,6 +236,7 @@ token's `--legacy` form and its WIF inherit the same assumption.
 --coin alephium:
 --coin xdag:
 --coin warthog:
+--coin noid:
 ```
 
 Integers are decimal or `0x`-prefixed hex. An unrecognised parameter is rejected rather than

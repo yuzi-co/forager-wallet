@@ -1,6 +1,6 @@
 # Forager Wallet
 
-**Offline payout-address and key generation for 32 cryptocurrencies.** No pool, no GPU, no network.
+**Offline payout-address and key generation for 33 cryptocurrencies.** No pool, no GPU, no network.
 
 ```sh
 cargo install forager-wallet
@@ -20,12 +20,16 @@ forager-wallet restore --mnemonic "<12–24 words>" --coin btc
 **A wrong address means unspendable funds, and no software can undo that.**
 
 Every address family here is clean-room — re-derived from the published standard — and locked by a
-known-answer test. That proves the *scheme*. It does not prove *your* address. Only an independent
-re-derivation does that.
+known-answer test. The one exception is Parano1d (`noid`), which has no standard to re-derive from:
+its Poseidon2b constants are copied from the project's Apache-2.0 reference node (see
+[`NOTICE`](NOTICE)), and its known-answer vectors were captured from that node's own key store.
+That proves the *scheme*. It does not prove *your* address. Only an independent re-derivation does
+that.
 
 1. Generate an address and back up the secret. It is printed once and never stored.
 2. Re-derive the same address in software that is not this tool — any standard WIF importer for a
-   single key, any standard BIP39 wallet for an `--hd` mnemonic. (`forager-wallet restore` re-derives
+   single key, any standard BIP39 wallet for an `--hd` mnemonic, the official Parano1d wallet for a
+   `noid` master secret. (`forager-wallet restore` re-derives
    it too, from either the hex, the WIF, or the mnemonic — useful as a first check, but it is not
    independent of this tool.)
 3. Confirm the two match character for character.
@@ -99,14 +103,16 @@ The miner's value is its optimized kernels. This tool's value is that you can re
 Key generation is the one thing a user should never run closed-source: a backdoored entropy source
 is undetectable from the outside and would steal every coin ever mined to the resulting address.
 Nothing here is proprietary — BIP32/39/44, secp256k1, Ed25519, bech32/bech32m, base58check,
-CashAddr and EIP-55 are public standards — so publishing costs nothing and buys a claim that can
-actually be verified.
+CashAddr and EIP-55 are public standards, and the Parano1d address hash is Apache-2.0 reference
+code — so publishing costs nothing and buys a claim that can actually be verified.
 
 ## Supported coins
 
-30 coins across nine address families and two curves: Taproot (bech32m), SegWit v0 (bech32), P2PKH
-(base58check), Ethereum (EIP-55), CryptoNote/Monero, Kaspa-family (CashAddr), Ergo, Alephium and
-XDAG.
+33 coins across twelve address families: Taproot (bech32m), SegWit v0 (bech32), P2PKH
+(base58check), Ethereum (EIP-55), CryptoNote/Monero, Kaspa-family (CashAddr), Ergo, Alephium, XDAG,
+Warthog, Conflux Core Space (CIP-37) and Parano1d. Two curves, secp256k1 and Ed25519, carry all of
+them but Parano1d, whose address is a Poseidon2b hash of the secret itself. For `noid` the printed
+secret is the wallet master secret the official Parano1d wallet imports.
 
 **[crates/wallet/COINS.md](crates/wallet/COINS.md)** documents every coin with its address form and
 HD path, the three HD purposes (BIP44 / BIP84 / BIP86), and how to generate for a coin that is not

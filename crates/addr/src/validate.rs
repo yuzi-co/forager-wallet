@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 
 use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote};
-use crate::coins::{Family, FamilyParams, COINS};
+use crate::coins::{Family, FamilyParams, COINS, NOID_ADDRESS_LEN, NOID_HRP};
 
 /// Characters in a Warthog address: 24 bytes (`hash160(20) ‖ checksum(4)`), two nibbles each.
 const WARTHOG_HEX_LEN: usize = 48;
@@ -128,6 +128,25 @@ pub fn detect_family(addr: &str) -> Option<Family> {
     if let Some(decoded) = conflux::decode(a) {
         if conflux_prefixes().any(|p| p == decoded.prefix) {
             return Some(Family::Conflux);
+        }
+    }
+
+    // 2c. Parano1d (NOID): `bech32m("o", payload)` with a 32-byte payload and **no** witness
+    //     version. Source: `ignotusnemo/parano1d@52938433` `noid_poseidon2b/src/primitives.rs`
+    //     (`Address::to_bech32`, `parse_address`). The derivation side is `forager-wallet`'s
+    //     `families/noid.rs`.
+    //
+    //     The HRP, the checksum constant and the payload length are all checked. This is stricter
+    //     than the reference parser, whose `bech32 0.11` decoder also takes the bech32 (non-m)
+    //     checksum and non-zero padding bits for the same 32 bytes. The node never emits either
+    //     spelling, so a string carrying one did not come from a Parano1d wallet and answering
+    //     `Noid` for it would be a guess. It falls through and comes back unrecognized.
+    if let Some((hrp, variant, payload)) = bech32::decode(a) {
+        if hrp == NOID_HRP
+            && variant == bech32::Variant::Bech32m
+            && payload.len() == NOID_ADDRESS_LEN
+        {
+            return Some(Family::Noid);
         }
     }
 
@@ -254,6 +273,7 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Xdag => "XDAG",
         Family::Warthog => "Warthog (hex)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
+        Family::Noid => "Parano1d (bech32m o1)",
     }
 }
 
@@ -1193,6 +1213,98 @@ mod tests {
             detect_family(&WARTHOG_CLIENT_LIB[..46]),
             Some(Family::Warthog)
         );
+    }
+
+    /// Two mainnet addresses the Parano1d reference pins in its own consensus tests:
+    /// `ignotusnemo/parano1d@52938433` `noid_chain/src/consensus/development_allocation.rs`,
+    /// `mainnet_fund_addresses_are_canonical` (the network fund and the lab allocation). The
+    /// derivation side is `forager-wallet`'s `families/noid.rs`.
+    const NOID_FUND: &str = "o1r3djxaz54k47kr54x76cwqkhl6xqucescv943m5m8uvc5w6x7euqct3h07";
+    const NOID_LAB: &str = "o1xcjdp3udp5sgwcvnmjlu9s53u4fx5m3hpquvg0uem2pr2mrr9dqq38jple";
+
+    #[test]
+    fn detects_noid() {
+        for a in [NOID_FUND, NOID_LAB] {
+            assert_eq!(a.len(), 60);
+            assert_eq!(detect_family(a), Some(Family::Noid), "{a}");
+            assert_eq!(check(a, Family::Noid), Verdict::Ok, "{a}");
+            // Single-case upper is the same address (BIP173 case rule, and the reference's own
+            // `bech32_case_insensitive` test).
+            assert_eq!(
+                detect_family(&a.to_ascii_uppercase()),
+                Some(Family::Noid),
+                "{a}"
+            );
+        }
+    }
+
+    /// Every rejection the classifier makes for an `o1…` string, each one named. The strings that
+    /// are not built here came out of the `kat-addr` harness against the reference.
+    #[test]
+    fn a_malformed_noid_address_is_not_confidently_classified() {
+        let (_, _, payload) = bech32::decode(NOID_FUND).unwrap();
+        assert_eq!(payload.len(), NOID_ADDRESS_LEN);
+
+        // Mixed case is invalid bech32, whatever the checksum says.
+        let mut mixed = NOID_FUND.to_string();
+        mixed.replace_range(2..3, "R");
+        assert_eq!(detect_family(&mixed), None);
+
+        // One character changed: the checksum fails.
+        let mut corrupted = NOID_FUND.to_string();
+        corrupted.replace_range(59..60, "8");
+        assert_ne!(detect_family(&corrupted), Some(Family::Noid));
+
+        // The same 32 bytes under the bech32 (non-m) checksum. The reference parser accepts this
+        // spelling; the node never emits it, so it is not answered as Parano1d.
+        let non_m = "o1r3djxaz54k47kr54x76cwqkhl6xqucescv943m5m8uvc5w6x7euqdhpm2u";
+        assert_eq!(
+            bech32::verify(non_m).map(|v| v.1),
+            Some(bech32::Variant::Bech32)
+        );
+        assert_ne!(detect_family(non_m), Some(Family::Noid));
+
+        // The right payload under another HRP.
+        let wrong_hrp = bech32::encode_bech32m_bytes("p", &payload);
+        assert!(bech32::verify(&wrong_hrp).is_some());
+        assert_ne!(detect_family(&wrong_hrp), Some(Family::Noid));
+
+        // The right HRP and checksum around a payload one byte short and one byte long.
+        for len in [NOID_ADDRESS_LEN - 1, NOID_ADDRESS_LEN + 1] {
+            let mut p = payload.clone();
+            p.resize(len, 0);
+            let s = bech32::encode_bech32m_bytes(NOID_HRP, &p);
+            assert!(bech32::verify(&s).is_some(), "{s}");
+            assert_ne!(detect_family(&s), Some(Family::Noid), "{len} bytes: {s}");
+        }
+
+        // A SegWit-shaped `o1…`: a witness version in front of the same 32 bytes makes the data
+        // part 33 bytes, so it is not a Parano1d address either.
+        let segwit_shaped = bech32::encode(NOID_HRP, 1, &payload);
+        assert_ne!(detect_family(&segwit_shaped), Some(Family::Noid));
+    }
+
+    /// A Parano1d address is a hash of a secret, not of a public key, so it is the payout target of
+    /// no other family; a paste of it where a Taproot address is expected is a real mismatch.
+    #[test]
+    fn noid_is_compatible_only_with_itself() {
+        assert!(matches!(
+            check(NOID_FUND, Family::Taproot),
+            Verdict::Mismatch {
+                detected: Family::Noid,
+                expected: Family::Taproot
+            }
+        ));
+        assert!(matches!(
+            check(
+                "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+                Family::Noid
+            ),
+            Verdict::Mismatch {
+                detected: Family::Taproot,
+                expected: Family::Noid
+            }
+        ));
     }
 
     /// XDAG and P2PKH are different chains, so a paste of one where the other is expected is a

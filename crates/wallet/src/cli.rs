@@ -210,6 +210,13 @@ fn cmd_new(coin: &str, net: Network, legacy: bool, testnet: bool) -> Result<(), 
         println!("Import into the official Oyster wallet is UNVERIFIED; for a long-term");
         println!("wallet, generate it in Oyster and pass only the address to --wallet.");
     }
+    if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Noid) {
+        println!();
+        println!("The raw key is the Parano1d wallet MASTER secret. The official wallet");
+        println!("imports it as-is: \"Restore from existing key\" in the GUI, or pipe it to");
+        println!("`parano1d --import-wallet-secret` (which replaces that node's wallet.key).");
+        println!("The address above is the wallet's address 0, the one it shows first.");
+    }
 
     Ok(())
 }
@@ -407,6 +414,7 @@ fn family_label(family: Family) -> &'static str {
         Family::Xdag => "XDAG (Base58Check, no version)",
         Family::Warthog => "Warthog (hex, single-SHA256 checksum)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
+        Family::Noid => "Parano1d (bech32m, Poseidon2b)",
     }
 }
 
@@ -454,6 +462,14 @@ mod tests {
     fn new_xmr() {
         let args = argv(&["new", "--coin", "xmr"]);
         assert!(run(&args).is_ok());
+    }
+
+    #[test]
+    fn new_and_restore_noid() {
+        assert!(run(&argv(&["new", "--coin", "noid"])).is_ok());
+        let master = "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a";
+        assert!(run(&argv(&["restore", master, "--coin", "noid"])).is_ok());
+        assert!(run(&argv(&["restore", "not-hex", "--coin", "noid"])).is_err());
     }
 
     #[test]
