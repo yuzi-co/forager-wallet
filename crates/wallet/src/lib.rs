@@ -206,6 +206,11 @@ pub fn address_from_secret_kind(
             families::noid::parse_master_secret(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
         return Ok(noid_wallet(&spec, &master));
     }
+    // Likewise a Quantus seed: any 32 bytes are a valid ML-DSA-87 seed.
+    if spec.family() == Family::Quantus {
+        let seed = families::quantus::parse_seed(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
+        return Ok(quantus_wallet(&spec, &seed));
+    }
     let priv32 = parse_secret(secret_hex)?;
     let d = curves::secp256k1::scalar_in_range(&priv32)?;
     build_wallet(&spec, &d, &priv32, net, legacy)
@@ -221,6 +226,13 @@ pub fn generate(coin: &str, net: Network) -> Result<Wallet, WalletError> {
         getrandom::getrandom(&mut master).map_err(|_| WalletError::Entropy)?;
         let w = noid_wallet(&spec, &master);
         zeroize::Zeroize::zeroize(&mut master);
+        return Ok(w);
+    }
+    if spec.family() == Family::Quantus {
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).map_err(|_| WalletError::Entropy)?;
+        let w = quantus_wallet(&spec, &seed);
+        zeroize::Zeroize::zeroize(&mut seed);
         return Ok(w);
     }
     loop {
@@ -267,6 +279,18 @@ fn noid_wallet(spec: &coins::CoinSpec, master: &[u8; 32]) -> Wallet {
         privkey: *master,
         secret_hex: hexbytes::encode(master),
         secret_std: SecretStd::RawHex(hexbytes::encode(master)),
+    }
+}
+
+/// Assemble the [`Wallet`] for a Quantus seed: the 32-byte `xi` of ML-DSA-87 key generation, as 64
+/// lowercase hex characters. Quantus addresses are network-agnostic.
+fn quantus_wallet(spec: &coins::CoinSpec, seed: &[u8; 32]) -> Wallet {
+    Wallet {
+        coin: spec.ticker,
+        address: families::quantus::address(seed),
+        privkey: *seed,
+        secret_hex: hexbytes::encode(seed),
+        secret_std: SecretStd::RawHex(hexbytes::encode(seed)),
     }
 }
 
@@ -332,6 +356,8 @@ pub(crate) fn dispatch(
         // `noid_wallet`) so that a master secret outside the secp256k1 range still derives; this
         // arm keeps `dispatch` total and agrees with them byte for byte.
         coins::FamilyParams::Noid => families::noid::address(priv32),
+        // Quantus likewise: the input bytes are the ML-DSA-87 seed, and `d` is unused.
+        coins::FamilyParams::Quantus => families::quantus::address(priv32),
 
         coins::FamilyParams::SegwitV0 {
             hrp,
@@ -703,6 +729,7 @@ mod tests {
             ("alephium:", "alph"),
             ("xdag:", "xdag"),
             ("noid:", "noid"),
+            ("quantus:", "quan"),
         ] {
             let t = address_from_secret(token, PRIV1, Network::Mainnet).unwrap();
             let r = address_from_secret(ticker, PRIV1, Network::Mainnet).unwrap();
@@ -1160,6 +1187,43 @@ mod tests {
         let again = address_from_secret("noid", &w.secret_hex, Network::Mainnet).unwrap();
         assert_eq!(again.address, w.address);
         assert_eq!(detect_family(&w.address), Some(Family::Noid));
+    }
+
+    /// Quantus through the public seam: the quantus-cli no-derivation vector, whose seed is the
+    /// first 32 bytes of the BIP-39 seed of the published mnemonic.
+    #[test]
+    fn quantus_seed_through_the_public_seam() {
+        let s = bip39::seed(
+            "orchard answer curve patient visual flower maze noise retreat penalty cage small \
+             earth domain scan pitch bottom crunch theme club client swap slice raven",
+            "",
+        )
+        .unwrap();
+        let seed_hex = hexbytes::encode(&s.as_bytes()[..32]);
+        let w = address_from_secret("quan", &seed_hex, Network::Mainnet).unwrap();
+        assert_eq!(
+            w.address,
+            "qzmTAz3UUw1WGUuVh8nbFmPwcftomduwy6twq6NDR6y9qqtEs"
+        );
+        assert_eq!(w.coin, "quan");
+        assert_eq!(w.secret_hex, seed_hex);
+        // Network-agnostic, and the zero seed is valid.
+        let t = address_from_secret("quan", &seed_hex, Network::Testnet).unwrap();
+        assert_eq!(t.address, w.address);
+        assert!(address_from_secret("quan", &"0".repeat(64), Network::Mainnet).is_ok());
+        assert_eq!(
+            address_from_secret("quan", &"0".repeat(63), Network::Mainnet).err(),
+            Some(WalletError::BadPrivKeyHex)
+        );
+        let g = generate("quan", Network::Mainnet).unwrap();
+        assert!(g.address.starts_with("qz"), "{}", g.address);
+        assert_eq!(
+            address_from_secret("quan", &g.secret_hex, Network::Mainnet)
+                .unwrap()
+                .address,
+            g.address
+        );
+        assert_eq!(detect_family(&g.address), Some(Family::Quantus));
     }
 
     // ---- Zcash-family transparent P2PKH rows (single-key path) ----

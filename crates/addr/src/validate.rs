@@ -25,7 +25,9 @@ use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 
 use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote};
-use crate::coins::{Family, FamilyParams, COINS, EPICBOX_VERSION, NOID_ADDRESS_LEN, NOID_HRP};
+use crate::coins::{
+    Family, FamilyParams, COINS, EPICBOX_VERSION, NOID_ADDRESS_LEN, NOID_HRP, QUANTUS_SS58_PREFIX,
+};
 
 /// Characters in a Warthog address: 24 bytes (`hash160(20) ‖ checksum(4)`), two nibbles each.
 const WARTHOG_HEX_LEN: usize = 48;
@@ -215,6 +217,11 @@ pub fn detect_family(addr: &str) -> Option<Family> {
             return Some(family);
         }
 
+        // 4b'. Quantus: SS58 with prefix 189, checksum verified. See [`quantus_family`].
+        if let Some(family) = quantus_family(&raw) {
+            return Some(family);
+        }
+
         // 4c. Alephium: `Base58(0x00 ‖ Blake2b256(pubkey))` — 33 bytes, leading 0x00, no checksum.
         //     Comes after base58check so a real BTC/LTC P2PKH (25 bytes, valid checksum) is caught
         //     above. Alephium is the one family left with no checksum to verify: it has none to
@@ -330,6 +337,7 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Epic => "Epic Cash (epicbox)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m o1)",
+        Family::Quantus => "Quantus (SS58 189, qz)",
     }
 }
 
@@ -580,6 +588,35 @@ fn ergo_family(raw: &[u8]) -> Option<Family> {
     }
     let (body, checksum) = raw.split_at(ERGO_LEN - ERGO_CHECKSUM_LEN);
     (crate::hash::blake2b256(body)[..ERGO_CHECKSUM_LEN] == *checksum).then_some(Family::Ergo)
+}
+
+/// Length of a decoded Quantus address: `prefix(2) ‖ account_id(32) ‖ checksum(2)`.
+const QUANTUS_LEN: usize = 36;
+
+/// Width of SS58's truncated Blake2b-512 checksum.
+const SS58_CHECKSUM_LEN: usize = 2;
+
+/// The two-byte SS58 spelling of a network prefix of 64..=16383, per the SS58 specification:
+/// `first = ((id & 0xfc) >> 2) | 0x40`, `second = (id >> 8) | ((id & 0x03) << 6)`.
+fn ss58_two_byte_prefix(id: u16) -> [u8; 2] {
+    [
+        u8::try_from((id & 0xfc) >> 2).unwrap_or(0) | 0x40,
+        u8::try_from(id >> 8).unwrap_or(0) | u8::try_from((id & 0x03) << 6).unwrap_or(0),
+    ]
+}
+
+/// Whether `raw` (an already-base58-decoded string) is a Quantus address: the two-byte SS58 prefix
+/// for 189, a 32-byte account id, and a Blake2b-512 checksum over `"SS58PRE" ‖ prefix ‖ id` that
+/// verifies. This arm decodes and checks only; the account id is a hash, so there is nothing
+/// further to verify offline.
+fn quantus_family(raw: &[u8]) -> Option<Family> {
+    if raw.len() != QUANTUS_LEN || raw[..2] != ss58_two_byte_prefix(QUANTUS_SS58_PREFIX) {
+        return None;
+    }
+    let (body, checksum) = raw.split_at(QUANTUS_LEN - SS58_CHECKSUM_LEN);
+    let mut pre = b"SS58PRE".to_vec();
+    pre.extend_from_slice(body);
+    (crate::hash::blake2b512(&pre)[..SS58_CHECKSUM_LEN] == *checksum).then_some(Family::Quantus)
 }
 
 /// Whether a decoded base58check payload is `version ‖ hash160` for a version prefix the coin table
@@ -1374,6 +1411,59 @@ mod tests {
             ),
             Verdict::Mismatch {
                 detected: Family::Taproot,
+                expected: Family::Noid
+            }
+        ));
+    }
+
+    /// The two addresses quantus-cli pins in `src/wallet/mod.rs` (`test_known_values`) for the
+    /// mnemonic "orchard answer curve ...", ML-DSA-87: the master seed and path
+    /// `m/44'/189189'/0'/0'/0'`.
+    const QUANTUS_MASTER: &str = "qzmTAz3UUw1WGUuVh8nbFmPwcftomduwy6twq6NDR6y9qqtEs";
+    const QUANTUS_HD0: &str = "qzm5QCox8Dp5A3oSXZZYHD8YoYgPz7enykZb6RPUropdCyN5h";
+
+    #[test]
+    fn detects_quantus() {
+        for a in [QUANTUS_MASTER, QUANTUS_HD0] {
+            assert_eq!(detect_family(a), Some(Family::Quantus), "{a}");
+            assert_eq!(check(a, Family::Quantus), Verdict::Ok, "{a}");
+            let raw = base58::decode(a).unwrap();
+            assert_eq!(raw.len(), QUANTUS_LEN);
+            assert_eq!(raw[..2], [0x6f, 0x40]);
+        }
+    }
+
+    /// Every single-character substitution of a Quantus address fails the checksum, and an
+    /// address truncated or with a foreign prefix is not answered as Quantus.
+    #[test]
+    fn a_malformed_quantus_address_is_not_confidently_classified() {
+        for pos in 0..QUANTUS_MASTER.len() {
+            let mut bad = QUANTUS_MASTER.as_bytes().to_vec();
+            bad[pos] = if bad[pos] == b'2' { b'3' } else { b'2' };
+            let bad = String::from_utf8(bad).unwrap();
+            assert_ne!(detect_family(&bad), Some(Family::Quantus), "{bad}");
+        }
+        assert_ne!(
+            detect_family(&QUANTUS_MASTER[..QUANTUS_MASTER.len() - 1]),
+            Some(Family::Quantus)
+        );
+        // Same account id and a valid checksum, but prefix 42 (generic substrate): not Quantus.
+        let raw = base58::decode(QUANTUS_MASTER).unwrap();
+        let mut body = vec![42u8];
+        body.extend_from_slice(&raw[2..34]);
+        let mut pre = b"SS58PRE".to_vec();
+        pre.extend_from_slice(&body);
+        body.extend_from_slice(&crate::hash::blake2b512(&pre)[..2]);
+        let generic = base58::encode(&body);
+        assert_ne!(detect_family(&generic), Some(Family::Quantus));
+    }
+
+    #[test]
+    fn quantus_is_compatible_only_with_itself() {
+        assert!(matches!(
+            check(QUANTUS_MASTER, Family::Noid),
+            Verdict::Mismatch {
+                detected: Family::Quantus,
                 expected: Family::Noid
             }
         ));
