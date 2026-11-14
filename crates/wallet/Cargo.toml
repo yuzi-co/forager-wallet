@@ -48,6 +48,12 @@ pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 unicode-normalization = "0.1"
 # Zero private-key/seed byte buffers on drop.
 zeroize = "1"
+# FIPS 204 ML-DSA-87 key generation from a 32-byte seed, for Quantus addresses. RustCrypto, pure
+# Rust, Apache-2.0 OR MIT. Chosen over Quantus's own `qp-rusty-crystals-dilithium` (GPL-3.0).
+ml-dsa = { version = "=0.1.2", default-features = false }
+# Poseidon2 over Goldilocks: Quantus's account-id hash (`hash_bytes(public_key)`). MIT-0, and it
+# has no dependencies of its own.
+qp-poseidon-core = { version = "=3.1.0", default-features = false }
 
 # `bip32` is also a dev-dependency so the HD KAT can assert the canonical BIP39 seed vector
 # directly (an official-vector anchor for the non-circular per-coin address KATs).

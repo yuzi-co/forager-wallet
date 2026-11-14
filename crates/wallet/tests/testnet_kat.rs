@@ -180,6 +180,7 @@ fn declares_testnet(params: &coins::FamilyParams) -> bool {
         | coins::FamilyParams::Xdag
         | coins::FamilyParams::Warthog
         | coins::FamilyParams::Noid
+        | coins::FamilyParams::Quantus
         | coins::FamilyParams::Ethereum => false,
     }
 }

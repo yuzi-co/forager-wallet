@@ -24,6 +24,11 @@
 /// entropy source; `zeroize` wipes key material on drop; `forager-addr` is the workspace's
 /// classification half. None of them carries a network stack.
 ///
+/// `ml-dsa` (RustCrypto, Apache-2.0 OR MIT) is FIPS 204 ML-DSA-87 key generation, for Quantus
+/// addresses. `qp-poseidon-core` (Quantus, MIT-0, no dependencies of its own) is the Poseidon2
+/// hash Quantus derives an account id with. Both are pure computation. Both are generation-side
+/// only: `forager-addr`, which the miner links, gains neither.
+///
 /// `pbkdf2` was already in the tree transitively via `bip32`, at the same version and feature
 /// selection, so declaring it directly added no crate. `unicode-normalization` is genuinely new:
 /// it is a pure-Rust Unicode data table with no I/O, and hand-rolling NFKD would be strictly worse
@@ -45,6 +50,8 @@ const ALLOWED: &[&str] = &[
     "pbkdf2",
     "unicode-normalization",
     "zeroize",
+    "ml-dsa",
+    "qp-poseidon-core",
 ];
 
 /// Parse the crate's own `[dependencies]` section into a list of dependency names.

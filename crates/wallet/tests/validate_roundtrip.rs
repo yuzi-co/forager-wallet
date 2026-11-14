@@ -76,7 +76,7 @@ fn every_generated_cryptonote_address_round_trips_through_detection() {
 
             // One character changed in the key region: same length, same leading tag, same
             // charset. Only the checksum separates it from the address above.
-            let mut bytes = w.address.clone().into_bytes();
+            let mut bytes = w.address.into_bytes();
             let j = bytes.len() / 2;
             bytes[j] = if bytes[j] == b'A' { b'B' } else { b'A' };
             let bad = String::from_utf8(bytes).unwrap();
@@ -176,7 +176,7 @@ fn every_generated_ergo_address_round_trips_through_detection() {
 
             // One flipped character in the middle: same length, same leading character, same
             // charset. Only the checksum separates it from the address above.
-            let mut bytes = w.address.clone().into_bytes();
+            let mut bytes = w.address.into_bytes();
             let i = bytes.len() / 2;
             bytes[i] = if bytes[i] == b'A' { b'B' } else { b'A' };
             let bad = String::from_utf8(bytes).unwrap();
@@ -346,6 +346,53 @@ fn every_generated_noid_address_round_trips_through_detection() {
             assert_ne!(
                 detect_family(&bad),
                 Some(Family::Noid),
+                "corruption at {pos} of {} still detected",
+                w.address
+            );
+        }
+    }
+}
+
+/// Every Quantus address the generator emits round-trips through detection, and no single-character
+/// corruption of one does. The vector is quantus-cli's own (`test_known_values`).
+#[test]
+fn every_generated_quantus_address_round_trips_through_detection() {
+    let seed = forager_wallet::bip39::seed(
+        "orchard answer curve patient visual flower maze noise retreat penalty cage small earth \
+         domain scan pitch bottom crunch theme club client swap slice raven",
+        "",
+    )
+    .unwrap();
+    let hex: String = seed.as_bytes()[..32]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let w = forager_wallet::address_from_secret("quan", &hex, Network::Mainnet).unwrap();
+    assert_eq!(
+        w.address,
+        "qzmTAz3UUw1WGUuVh8nbFmPwcftomduwy6twq6NDR6y9qqtEs"
+    );
+    assert_eq!(detect_family(&w.address), Some(Family::Quantus));
+
+    // Key generation is slow in a debug build, so a handful of seeds is enough.
+    for i in 0u32..4 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("quan", &secret, Network::Mainnet).unwrap();
+        assert!(w.address.starts_with("qz"), "key {secret}: {}", w.address);
+        assert_eq!(
+            detect_family(&w.address),
+            Some(Family::Quantus),
+            "{}",
+            w.address
+        );
+        assert_eq!(check(&w.address, Family::Quantus), Verdict::Ok);
+        for pos in 0..w.address.len() {
+            let mut bad = w.address.clone().into_bytes();
+            bad[pos] = if bad[pos] == b'2' { b'3' } else { b'2' };
+            let bad = String::from_utf8(bad).unwrap();
+            assert_ne!(
+                detect_family(&bad),
+                Some(Family::Quantus),
                 "corruption at {pos} of {} still detected",
                 w.address
             );

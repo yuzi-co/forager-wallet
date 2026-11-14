@@ -52,7 +52,15 @@ pub enum Family {
     /// the secret itself, and ownership is proved in zero knowledge rather than by a signature.
     /// Always 60 characters, `o1…`, network-agnostic.
     Noid,
+    /// Quantus Network: SS58 with network prefix 189, over `Poseidon2(ML-DSA-87 public key)`. No
+    /// curve in the classical sense and no checksum byte beyond SS58's own two. Always 49 or 50
+    /// characters, `qz…`, network-agnostic.
+    Quantus,
 }
+
+/// SS58 network prefix of a Quantus address: `Ss58AddressFormat::custom(189)` in quantus-cli
+/// `src/cli/address_format.rs`. 189 is above 63, so SS58 spells it as two prefix bytes.
+pub const QUANTUS_SS58_PREFIX: u16 = 189;
 
 /// Human-readable part of a Parano1d (NOID) address. The reference node has exactly one, and uses it
 /// on every network: `ignotusnemo/parano1d@52938433` `noid_poseidon2b/src/primitives.rs`
@@ -167,6 +175,9 @@ pub enum FamilyParams {
     /// Parano1d has no per-coin parameters: the HRP is the protocol constant [`NOID_HRP`] on every
     /// network.
     Noid,
+    /// Quantus has no per-coin parameters: the SS58 prefix is the protocol constant
+    /// [`QUANTUS_SS58_PREFIX`] on every network.
+    Quantus,
 }
 
 impl FamilyParams {
@@ -186,6 +197,7 @@ impl FamilyParams {
             FamilyParams::Warthog => Family::Warthog,
             FamilyParams::Conflux { .. } => Family::Conflux,
             FamilyParams::Noid => Family::Noid,
+            FamilyParams::Quantus => Family::Quantus,
         }
     }
 
@@ -614,6 +626,16 @@ pub static COINS: &[CoinSpec] = &[
         hd_slip44: None,
         params: FamilyParams::Noid,
     },
+    // ---- Quantus family ----
+    // Quantus Network (ML-DSA-87): address = SS58(prefix 189, Poseidon2(public key)). Source:
+    // Quantus-Network/chain primitives/dilithium-crypto (`IdentifyAccount`: `hash_bytes(public)`),
+    // Quantus-Network/qp-poseidon (MIT-0) `hash_bytes`, quantus-cli `src/cli/address_format.rs`.
+    CoinSpec {
+        ticker: "quan",
+        name: "Quantus",
+        hd_slip44: None,
+        params: FamilyParams::Quantus,
+    },
     // SCASH ("Satoshi Cash", RandomX): address bytes left BYTE-IDENTICAL to Bitcoin — P2PKH
     // 0x00, WIF 0x80, bech32 HRP "bc"; testnet 0x6f/"tb". So a SCASH address is indistinguishable
     // from a BTC one (same encoder, same bytes).  Source: scashnetwork/scash (MIT),
@@ -872,6 +894,14 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         example: "noid:",
         caveat: None,
     },
+    TokenSyntax {
+        family: "quantus",
+        keys: &[],
+        flags: &[],
+        syntax: "quantus:",
+        example: "quantus:",
+        caveat: None,
+    },
 ];
 
 /// The [`TokenSyntax::caveat`] for a runtime coin token's family, or `None` if it has none.
@@ -997,6 +1027,7 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
         "xdag" => FamilyParams::Xdag,
         "warthog" => FamilyParams::Warthog,
         "noid" => FamilyParams::Noid,
+        "quantus" => FamilyParams::Quantus,
         // Unreachable while `TOKEN_GRAMMAR` and this match list the same families — the lookup above
         // already rejected any name the grammar does not carry.  Report it instead of panicking, so a
         // grammar row added without an arm here degrades to a clear message; the
@@ -1386,6 +1417,7 @@ mod tests {
                 FamilyParams::Warthog => Family::Warthog,
                 FamilyParams::Conflux { .. } => Family::Conflux,
                 FamilyParams::Noid => Family::Noid,
+                FamilyParams::Quantus => Family::Quantus,
             };
             assert_eq!(spec.family(), expected, "{}", spec.ticker);
         }

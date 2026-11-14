@@ -339,6 +339,9 @@ fn leading_characters(spec: &coins::CoinSpec) -> Leading {
         // `bech32m("o", payload)`: the HRP verbatim and the separator, then the payload's 5-bit
         // groups (`codec::bech32::encode_bech32m_bytes`). There is no witness version, so the
         // first data character is already key-dependent: `o1` is all that is forced.
+        // SS58 prefix 189 is the two bytes `6f 40`, which base58 renders as `qz` for every
+        // account id (every sample in the KAT, and the published addresses, open `qz`).
+        coins::FamilyParams::Quantus => Leading::Forced("qz".to_string()),
         coins::FamilyParams::Noid => Leading::Forced(format!("{}1", coins::NOID_HRP)),
         coins::FamilyParams::Warthog => Leading::Undecided(
             "the address is bare hex of a key-dependent hash with no version byte or prefix, so \
