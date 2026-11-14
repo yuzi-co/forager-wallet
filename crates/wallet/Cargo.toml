@@ -2,6 +2,7 @@
 name = "forager-wallet"
 version = "0.4.0"
 edition = "2021"
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = true
 repository = "https://github.com/yuzi-co/forager-wallet"
@@ -17,10 +18,9 @@ categories = ["cryptography::cryptocurrencies", "command-line-utilities"]
 # crate is extracted to the public forager-wallet repository, which has no such workspace.
 [dependencies]
 # secp256k1 point arithmetic (RustCrypto, pure Rust, audited, constant-time scalar math). Already
-# in the dependency graph via `bip32` (HD mode) and `algo-nexapow` — same 0.13 line and the same
-# `default-features = false, features = ["arithmetic", "std"]` selection, so no second copy of
-# `k256`/`elliptic-curve` enters the tree.
-k256 = { version = "0.13", default-features = false, features = ["arithmetic", "std"] }
+# in the dependency graph via `bip32` (HD mode), on the same 0.14 line, so no second copy of
+# `k256`/`elliptic-curve` enters the tree. 0.14 moved to `crypto-bigint` 0.7, clearing RUSTSEC-2026-0387.
+k256 = { version = "0.14", default-features = false, features = ["arithmetic", "std"] }
 # Still used by the ed25519 (CryptoNote) curve — not by secp256k1.
 num-bigint = "0.4"
 num-traits = "0.2"
@@ -32,15 +32,15 @@ forager-addr = { path = "../addr", version = "0.4.0" }
 # Equihash's consensus-critical Blake2b — same well-vetted crate, not a new supply-chain surface).
 blake2b_simd = "1"
 getrandom = "0.2"
-# BIP39/BIP44 HD mode (`hd` module, opt-in `forager-wallet new --hd`). `bip32` (iqlusion,
-# Apache-2.0/MIT, actively maintained) bundles BIP39 mnemonic↔seed and BIP32/BIP44 derivation on
-# the pure-Rust `k256` secp256k1 backend — no C toolchain, cross-compiles under the Zig path.
+# BIP44 HD mode (`hd` module, opt-in `forager-wallet new --hd`). `bip32` (iqlusion,
+# Apache-2.0/MIT, actively maintained) provides BIP32/BIP44 derivation on
+# the pure-Rust `k256` secp256k1 backend (BIP39 is this crate's own `bip39` module; `bip32` 0.6
+# dropped its mnemonic code) — no C toolchain, cross-compiles under the Zig path.
 # Used ONLY for HD derivation; the single-key generator stays on the crate's own clean-room curve.
-bip32 = { version = "0.5", features = ["mnemonic", "bip39", "std"] }
+bip32 = { version = "0.6", default-features = false, features = ["secp256k1", "alloc"] }
 # PBKDF2-HMAC-SHA512 for BIP-39 phrase→seed (`bip39` module). RustCrypto, pure Rust, and already
-# in the tree transitively via `bip32` at this exact version with this exact feature selection —
-# declaring it directly adds no new crate, it just stops the dependency being implicit.
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+# RustCrypto, pure Rust.
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 # NFKD normalization for BIP-39 phrase/passphrase, which the spec mandates on both. Pure Rust,
 # data-table only: no curve, no entropy source, no network. This is the one genuinely new crate —
 # hand-rolling Unicode normalization would be far worse than depending on the maintained
@@ -55,10 +55,10 @@ ml-dsa = { version = "=0.1.2", default-features = false }
 # has no dependencies of its own.
 qp-poseidon-core = { version = "=3.1.0", default-features = false }
 
-# `bip32` is also a dev-dependency so the HD KAT can assert the canonical BIP39 seed vector
-# directly (an official-vector anchor for the non-circular per-coin address KATs).
+# `bip32` is also a dev-dependency so the HD KATs can drive BIP32 CKDpriv directly against the
+# published BIP32 test vectors (an official-vector anchor for the non-circular per-coin address KATs).
 [dev-dependencies]
-bip32 = { version = "0.5", features = ["mnemonic", "bip39", "std"] }
+bip32 = { version = "0.6", default-features = false, features = ["secp256k1", "alloc"] }
 
 # Copied from the workspace `[workspace.lints]` rather than inherited, for the same reason as
 # `edition`/`license` above.

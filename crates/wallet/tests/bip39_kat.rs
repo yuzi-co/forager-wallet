@@ -40,6 +40,21 @@ use forager_wallet::bip39::{self, Bip39Error, SEED_LEN};
 /// Passphrase used by every row of the official `vectors.json`.
 const TREZOR: &str = "TREZOR";
 
+/// Independent oracle for the BIP-39 seed: raw PBKDF2-HMAC-SHA512 (2048 rounds, salt
+/// `"mnemonic" + passphrase`) over the UTF-8 bytes exactly as given, with NO normalization.
+/// This replaces the `bip32::Mnemonic::to_seed` cross-check, since `bip32` 0.6 dropped its BIP-39
+/// module. It reproduces that function's behaviour byte for byte, including its lack of NFKD.
+fn raw_pbkdf2_seed(phrase: &str, passphrase: &str) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
+        phrase.as_bytes(),
+        format!("mnemonic{passphrase}").as_bytes(),
+        2048,
+        &mut out,
+    );
+    out
+}
+
 /// Decode a lowercase hex string. Local to the test so the KAT does not lean on crate internals.
 fn unhex(s: &str) -> Vec<u8> {
     assert!(
@@ -263,13 +278,6 @@ fn twelve_word_phrase_is_accepted() {
     let phrase = ENGLISH_VECTORS[0].1;
     assert_eq!(phrase.split_whitespace().count(), 12);
     bip39::validate(phrase).expect("a valid 12-word phrase must validate");
-
-    // And the delegated implementation really does reject it — pin that, so this test keeps
-    // documenting *why* the module exists even after the integration lands.
-    assert!(
-        bip32::Mnemonic::new(phrase, Default::default()).is_err(),
-        "if bip32 ever accepts 12-word phrases, this module's first reason to exist is gone"
-    );
 }
 
 /// Every legal length round-trips entropy → phrase → entropy, including the 15- and 21-word
@@ -374,13 +382,11 @@ fn seed_matches_bip32_for_a_24_word_phrase() {
         if phrase.split_whitespace().count() != 24 {
             continue;
         }
-        let theirs = bip32::Mnemonic::new(phrase, Default::default())
-            .expect("bip32 parses 24-word phrases")
-            .to_seed(TREZOR);
+        let theirs = raw_pbkdf2_seed(phrase, TREZOR);
         let ours = bip39::seed(phrase, TREZOR).expect("valid phrase");
         assert_eq!(
             hex(ours.as_bytes()),
-            hex(theirs.as_bytes()),
+            hex(&theirs),
             "seed divergence on {phrase}"
         );
     }
@@ -396,7 +402,7 @@ fn seed_bytes_construct_a_bip32_seed_and_derive_the_same_key() {
     let ours = bip39::seed(phrase, "").expect("valid 12-word phrase");
 
     // `Seed::new([u8; 64])` is public, so no rewiring of the derivation is needed.
-    let seed = bip32::Seed::new(*ours.as_bytes());
+    let seed = *ours.as_bytes();
     let path: DerivationPath = "m/44'/0'/0'/0/0".parse().expect("valid path");
     let xprv = XPrv::derive_from_path(&seed, &path).expect("derivation succeeds");
     let key: [u8; 32] = PrivateKey::to_bytes(xprv.private_key());
@@ -409,13 +415,10 @@ fn seed_bytes_construct_a_bip32_seed_and_derive_the_same_key() {
         .find(|(_, p, _)| p.split_whitespace().count() == 24)
         .expect("the official set has 24-word rows")
         .1;
-    let theirs = bip32::Mnemonic::new(phrase24, Default::default())
-        .expect("bip32 parses 24-word phrases")
-        .to_seed(TREZOR);
+    let theirs = raw_pbkdf2_seed(phrase24, TREZOR);
     let mine = bip39::seed(phrase24, TREZOR).expect("valid phrase");
     let a = XPrv::derive_from_path(&theirs, &path).expect("derivation succeeds");
-    let b = XPrv::derive_from_path(bip32::Seed::new(*mine.as_bytes()), &path)
-        .expect("derivation succeeds");
+    let b = XPrv::derive_from_path(mine.as_bytes(), &path).expect("derivation succeeds");
     assert_eq!(
         PrivateKey::to_bytes(a.private_key()),
         PrivateKey::to_bytes(b.private_key()),

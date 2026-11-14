@@ -43,7 +43,7 @@ ignore = []
 [licenses]
 version = 2
 # Only permissive, redistribution-friendly licenses for third-party deps. This list is derived from
-# the actual dependency tree: `cargo metadata --all-features` over 54 packages carrying 12 distinct
+# the actual dependency tree: `cargo metadata --all-features` over 78 packages carrying distinct
 # SPDX expressions, all targets.
 #
 # The numbers above used to read "267 packages, 29 distinct SPDX expressions", which was this
@@ -61,7 +61,6 @@ allow = [
     "Apache-2.0",
     "MIT",
     "MIT-0",
-    "BSD-2-Clause",
     "BSD-3-Clause",
     "CC0-1.0",
     "Zlib",
