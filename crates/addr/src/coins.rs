@@ -38,6 +38,9 @@ pub enum Family {
     /// SHA-256 checksum instead of Base58Check's double. No version byte, no prefix,
     /// network-agnostic; always 48 characters.
     Warthog,
+    /// Epic Cash epicbox address: `Base58Check([0x01, 0x00] ‖ compressed_pubkey)` followed by
+    /// `@<relay domain>`. Mainnet only here; the base58 part is 52 characters and begins `es`.
+    Epic,
     /// Conflux Core Space (CIP-37): the keccak160 of the uncompressed pubkey with its leading four
     /// bits forced to `type.user`, encoded with the CashAddr checksum under CIP-37's own base32
     /// alphabet as `<prefix>:<payload><8-char checksum>`.
@@ -52,12 +55,28 @@ pub enum Family {
     /// the secret itself, and ownership is proved in zero knowledge rather than by a signature.
     /// Always 60 characters, `o1…`, network-agnostic.
     Noid,
+    /// Quantus Network: SS58 with network prefix 189, over `Poseidon2(ML-DSA-87 public key)`. No
+    /// curve in the classical sense and no checksum byte beyond SS58's own two. Always 49 or 50
+    /// characters, `qz…`, network-agnostic.
+    Quantus,
 }
+
+/// SS58 network prefix of a Quantus address: `Ss58AddressFormat::custom(189)` in quantus-cli
+/// `src/cli/address_format.rs`. 189 is above 63, so SS58 spells it as two prefix bytes.
+pub const QUANTUS_SS58_PREFIX: u16 = 189;
 
 /// Human-readable part of a Parano1d (NOID) address. The reference node has exactly one, and uses it
 /// on every network: `ignotusnemo/parano1d@52938433` `noid_poseidon2b/src/primitives.rs`
 /// `ADDRESS_HRP`.
 pub const NOID_HRP: &str = "o";
+
+/// Version bytes of a mainnet Epic Cash epicbox address (`[0x01, 0x00]`). Source:
+/// `EpicCash/epic-wallet` `libwallet/src/epicbox_address.rs` (`version_bytes`).
+pub const EPICBOX_VERSION: [u8; 2] = [0x01, 0x00];
+
+/// The epicbox relay domain appended to a printed address. The default relay, with no port: the
+/// pool accepts only an absent port or 443.
+pub const EPICBOX_DEFAULT_DOMAIN: &str = "epicbox.epiccash.com";
 
 /// Payload bytes in a Parano1d (NOID) address: one Poseidon2b digest, two GF(2^128) lanes.
 pub const NOID_ADDRESS_LEN: usize = 32;
@@ -153,6 +172,9 @@ pub enum FamilyParams {
     /// Warthog has no per-coin parameters — the address is network-agnostic (no version byte, no
     /// prefix). The node uses the same encoding on testnet.
     Warthog,
+    /// Epic has no per-coin parameters: the version bytes are the protocol constant
+    /// [`EPICBOX_VERSION`] and only mainnet is supported.
+    Epic,
     /// Conflux Core Space: the network prefix that precedes the `:`, per network.
     ///
     /// CIP-37 fixes the version byte at `0x00` for every address it defines, so the prefix is the
@@ -167,6 +189,9 @@ pub enum FamilyParams {
     /// Parano1d has no per-coin parameters: the HRP is the protocol constant [`NOID_HRP`] on every
     /// network.
     Noid,
+    /// Quantus has no per-coin parameters: the SS58 prefix is the protocol constant
+    /// [`QUANTUS_SS58_PREFIX`] on every network.
+    Quantus,
 }
 
 impl FamilyParams {
@@ -184,8 +209,10 @@ impl FamilyParams {
             FamilyParams::Alephium => Family::Alephium,
             FamilyParams::Xdag => Family::Xdag,
             FamilyParams::Warthog => Family::Warthog,
+            FamilyParams::Epic => Family::Epic,
             FamilyParams::Conflux { .. } => Family::Conflux,
             FamilyParams::Noid => Family::Noid,
+            FamilyParams::Quantus => Family::Quantus,
         }
     }
 
@@ -601,6 +628,19 @@ pub static COINS: &[CoinSpec] = &[
         hd_slip44: None,
         params: FamilyParams::Warthog,
     },
+    // ---- Epic Cash family ----
+    // Epic Cash (EPIC): an epicbox address is Base58Check([0x01, 0x00] ‖ compressed secp256k1
+    // pubkey) (Bitcoin alphabet, SHA256d checksum), 52 characters starting `es`, followed by
+    // `@<relay domain>`. Source: EpicCash/epic-wallet libwallet/src/epicbox_address.rs +
+    // libwallet/src/base58.rs; pool-side validation in epic-nodejs-pool lib/utils.js
+    // (`parseMinerAddress`). The wallet derives its own epicbox key from the wallet seed, so an
+    // address minted here from a random key is NOT restorable from an Epic wallet seed.
+    CoinSpec {
+        ticker: "epic",
+        name: "Epic Cash",
+        hd_slip44: None,
+        params: FamilyParams::Epic,
+    },
     // ---- Parano1d family ----
     // Parano1d (NOID): address = bech32m("o", Poseidon2b_ADDRFIX(spend_secret)), a 32-byte hash of
     // the secret with no curve and no version byte. The wallet holds one 32-byte master secret and
@@ -613,6 +653,16 @@ pub static COINS: &[CoinSpec] = &[
         name: "Parano1d",
         hd_slip44: None,
         params: FamilyParams::Noid,
+    },
+    // ---- Quantus family ----
+    // Quantus Network (ML-DSA-87): address = SS58(prefix 189, Poseidon2(public key)). Source:
+    // Quantus-Network/chain primitives/dilithium-crypto (`IdentifyAccount`: `hash_bytes(public)`),
+    // Quantus-Network/qp-poseidon (MIT-0) `hash_bytes`, quantus-cli `src/cli/address_format.rs`.
+    CoinSpec {
+        ticker: "quan",
+        name: "Quantus",
+        hd_slip44: None,
+        params: FamilyParams::Quantus,
     },
     // SCASH ("Satoshi Cash", RandomX): address bytes left BYTE-IDENTICAL to Bitcoin — P2PKH
     // 0x00, WIF 0x80, bech32 HRP "bc"; testnet 0x6f/"tb". So a SCASH address is indistinguishable
@@ -865,11 +915,31 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         caveat: None,
     },
     TokenSyntax {
+        family: "epic",
+        keys: &[],
+        flags: &[],
+        syntax: "epic:",
+        example: "epic:",
+        caveat: Some(
+            "The key is a random secp256k1 key, not one derived from an Epic wallet seed, so the\n\
+             address cannot be restored from an Epic wallet. Epic payouts are interactive\n\
+             Mimblewimble slates exchanged through epicbox. Mainnet only.",
+        ),
+    },
+    TokenSyntax {
         family: "noid",
         keys: &[],
         flags: &[],
         syntax: "noid:",
         example: "noid:",
+        caveat: None,
+    },
+    TokenSyntax {
+        family: "quantus",
+        keys: &[],
+        flags: &[],
+        syntax: "quantus:",
+        example: "quantus:",
         caveat: None,
     },
 ];
@@ -996,7 +1066,9 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
         "alephium" => FamilyParams::Alephium,
         "xdag" => FamilyParams::Xdag,
         "warthog" => FamilyParams::Warthog,
+        "epic" => FamilyParams::Epic,
         "noid" => FamilyParams::Noid,
+        "quantus" => FamilyParams::Quantus,
         // Unreachable while `TOKEN_GRAMMAR` and this match list the same families — the lookup above
         // already rejected any name the grammar does not carry.  Report it instead of panicking, so a
         // grammar row added without an arm here degrades to a clear message; the
@@ -1252,6 +1324,7 @@ mod tests {
             Family::Ergo,
             Family::Alephium,
             Family::Xdag,
+            Family::Epic,
         ] {
             assert!(reachable.contains(&f), "no coin token produces {f:?}");
         }
@@ -1384,8 +1457,10 @@ mod tests {
                 FamilyParams::Alephium => Family::Alephium,
                 FamilyParams::Xdag => Family::Xdag,
                 FamilyParams::Warthog => Family::Warthog,
+                FamilyParams::Epic => Family::Epic,
                 FamilyParams::Conflux { .. } => Family::Conflux,
                 FamilyParams::Noid => Family::Noid,
+                FamilyParams::Quantus => Family::Quantus,
             };
             assert_eq!(spec.family(), expected, "{}", spec.ticker);
         }

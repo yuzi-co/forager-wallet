@@ -25,10 +25,18 @@ use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 
 use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote};
-use crate::coins::{Family, FamilyParams, COINS, NOID_ADDRESS_LEN, NOID_HRP};
+use crate::coins::{
+    Family, FamilyParams, COINS, EPICBOX_VERSION, NOID_ADDRESS_LEN, NOID_HRP, QUANTUS_SS58_PREFIX,
+};
 
 /// Characters in a Warthog address: 24 bytes (`hash160(20) ‖ checksum(4)`), two nibbles each.
 const WARTHOG_HEX_LEN: usize = 48;
+
+/// Base58 characters in an epicbox address: 39 bytes (`version(2) ‖ pubkey(33) ‖ checksum(4)`).
+const EPICBOX_BASE58_LEN: usize = 52;
+
+/// Payload length of an epicbox address once the checksum is removed: `version(2) ‖ pubkey(33)`.
+const EPICBOX_PAYLOAD_LEN: usize = 35;
 
 /// Longest address string detection will look at, in bytes.
 ///
@@ -100,6 +108,12 @@ pub fn detect_family(addr: &str) -> Option<Family> {
                 return Some(Family::Warthog);
             }
         }
+    }
+
+    // 1c. Epic Cash epicbox address: `Base58Check([1, 0] ‖ pubkey(33))` with an optional
+    //     `epicbox://` prefix and an optional `@domain[:port]` suffix. See [`epic_epicbox`].
+    if epic_epicbox(a) {
+        return Some(Family::Epic);
     }
 
     // 2. Kaspa-family CashAddr: `<prefix>:<payload>` where the CashAddr checksum verifies and the
@@ -203,6 +217,11 @@ pub fn detect_family(addr: &str) -> Option<Family> {
             return Some(family);
         }
 
+        // 4b'. Quantus: SS58 with prefix 189, checksum verified. See [`quantus_family`].
+        if let Some(family) = quantus_family(&raw) {
+            return Some(family);
+        }
+
         // 4c. Alephium: `Base58(0x00 ‖ Blake2b256(pubkey))` — 33 bytes, leading 0x00, no checksum.
         //     Comes after base58check so a real BTC/LTC P2PKH (25 bytes, valid checksum) is caught
         //     above. Alephium is the one family left with no checksum to verify: it has none to
@@ -221,6 +240,49 @@ pub fn detect_family(addr: &str) -> Option<Family> {
     }
 
     None
+}
+
+/// Whether `a` is an Epic Cash epicbox address: `[epicbox://]<52 base58>[@host[:port]]`, where the
+/// base58 part decodes to 39 bytes, the SHA256d checksum holds, the version bytes are
+/// [`EPICBOX_VERSION`] and the key is a compressed secp256k1 point prefix (`02` or `03`).
+///
+/// Source: `EpicCash/epic-wallet` `libwallet/src/epicbox_address.rs` and the pool's
+/// `epic-nodejs-pool` `lib/utils.js` `parseMinerAddress`, which applies the same rules. The
+/// checksum and the version bytes are what make this unambiguous: no other modelled family decodes
+/// to a 35-byte base58check payload with a `01 00` lead. The derivation side is `forager-wallet`'s
+/// `families/epic.rs`.
+fn epic_epicbox(a: &str) -> bool {
+    let rest = a.strip_prefix("epicbox://").unwrap_or(a);
+    let (body, domain) = match rest.split_once('@') {
+        Some((body, domain)) => (body, Some(domain)),
+        None => (rest, None),
+    };
+    if body.len() != EPICBOX_BASE58_LEN {
+        return false;
+    }
+    if let Some(domain) = domain {
+        let (host, port) = match domain.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (domain, None),
+        };
+        let host_ok = !host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+        let port_ok = port.is_none_or(|p| p.bytes().all(|b| b.is_ascii_digit()));
+        if !host_ok || !port_ok {
+            return false;
+        }
+    }
+    let Some(raw) = base58::decode(body) else {
+        return false;
+    };
+    let Some(payload) = base58::verify_check(&raw) else {
+        return false;
+    };
+    payload.len() == EPICBOX_PAYLOAD_LEN
+        && payload.starts_with(&EPICBOX_VERSION)
+        && matches!(payload[EPICBOX_VERSION.len()], 0x02 | 0x03)
 }
 
 /// The outcome of checking one address against the family a pool is expected to pay out in. The
@@ -272,8 +334,10 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Alephium => "Alephium",
         Family::Xdag => "XDAG",
         Family::Warthog => "Warthog (hex)",
+        Family::Epic => "Epic Cash (epicbox)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m o1)",
+        Family::Quantus => "Quantus (SS58 189, qz)",
     }
 }
 
@@ -524,6 +588,35 @@ fn ergo_family(raw: &[u8]) -> Option<Family> {
     }
     let (body, checksum) = raw.split_at(ERGO_LEN - ERGO_CHECKSUM_LEN);
     (crate::hash::blake2b256(body)[..ERGO_CHECKSUM_LEN] == *checksum).then_some(Family::Ergo)
+}
+
+/// Length of a decoded Quantus address: `prefix(2) ‖ account_id(32) ‖ checksum(2)`.
+const QUANTUS_LEN: usize = 36;
+
+/// Width of SS58's truncated Blake2b-512 checksum.
+const SS58_CHECKSUM_LEN: usize = 2;
+
+/// The two-byte SS58 spelling of a network prefix of 64..=16383, per the SS58 specification:
+/// `first = ((id & 0xfc) >> 2) | 0x40`, `second = (id >> 8) | ((id & 0x03) << 6)`.
+fn ss58_two_byte_prefix(id: u16) -> [u8; 2] {
+    [
+        u8::try_from((id & 0xfc) >> 2).unwrap_or(0) | 0x40,
+        u8::try_from(id >> 8).unwrap_or(0) | u8::try_from((id & 0x03) << 6).unwrap_or(0),
+    ]
+}
+
+/// Whether `raw` (an already-base58-decoded string) is a Quantus address: the two-byte SS58 prefix
+/// for 189, a 32-byte account id, and a Blake2b-512 checksum over `"SS58PRE" ‖ prefix ‖ id` that
+/// verifies. This arm decodes and checks only; the account id is a hash, so there is nothing
+/// further to verify offline.
+fn quantus_family(raw: &[u8]) -> Option<Family> {
+    if raw.len() != QUANTUS_LEN || raw[..2] != ss58_two_byte_prefix(QUANTUS_SS58_PREFIX) {
+        return None;
+    }
+    let (body, checksum) = raw.split_at(QUANTUS_LEN - SS58_CHECKSUM_LEN);
+    let mut pre = b"SS58PRE".to_vec();
+    pre.extend_from_slice(body);
+    (crate::hash::blake2b512(&pre)[..SS58_CHECKSUM_LEN] == *checksum).then_some(Family::Quantus)
 }
 
 /// Whether a decoded base58check payload is `version ‖ hash160` for a version prefix the coin table
@@ -1195,6 +1288,22 @@ mod tests {
         assert_eq!(check(WARTHOG_CLIENT_LIB, Family::Warthog), Verdict::Ok);
     }
 
+    /// A real published epicbox address: the epic-nodejs-pool donation address. Detection must
+    /// verify the checksum and version bytes, and accept the optional `@domain` suffix.
+    const EPIC_POOL_ADDR: &str = "esYd2vznULSZPn8yQG1SpViF1xEdSs4Fa4n91tkhdSxZCNVdkBt4";
+
+    #[test]
+    fn detects_epic_epicbox() {
+        let full = format!("{EPIC_POOL_ADDR}@epicbox.epiccash.com");
+        for a in [EPIC_POOL_ADDR, full.as_str()] {
+            assert_eq!(detect_family(a), Some(Family::Epic), "{a}");
+            assert_eq!(check(a, Family::Epic), Verdict::Ok);
+        }
+        // Last character changed: checksum fails.
+        let bad = format!("{}5@epicbox.epiccash.com", &EPIC_POOL_ADDR[..51]);
+        assert_ne!(detect_family(&bad), Some(Family::Epic));
+    }
+
     /// A Warthog address is bare hex with nothing to anchor it but its checksum, so the checksum is
     /// the whole of the answer. A corrupted paste must not come back as a confident `Warthog` —
     /// this is the same trap the Kaspa and Ergo arms were fixed for.
@@ -1302,6 +1411,59 @@ mod tests {
             ),
             Verdict::Mismatch {
                 detected: Family::Taproot,
+                expected: Family::Noid
+            }
+        ));
+    }
+
+    /// The two addresses quantus-cli pins in `src/wallet/mod.rs` (`test_known_values`) for the
+    /// mnemonic "orchard answer curve ...", ML-DSA-87: the master seed and path
+    /// `m/44'/189189'/0'/0'/0'`.
+    const QUANTUS_MASTER: &str = "qzmTAz3UUw1WGUuVh8nbFmPwcftomduwy6twq6NDR6y9qqtEs";
+    const QUANTUS_HD0: &str = "qzm5QCox8Dp5A3oSXZZYHD8YoYgPz7enykZb6RPUropdCyN5h";
+
+    #[test]
+    fn detects_quantus() {
+        for a in [QUANTUS_MASTER, QUANTUS_HD0] {
+            assert_eq!(detect_family(a), Some(Family::Quantus), "{a}");
+            assert_eq!(check(a, Family::Quantus), Verdict::Ok, "{a}");
+            let raw = base58::decode(a).unwrap();
+            assert_eq!(raw.len(), QUANTUS_LEN);
+            assert_eq!(raw[..2], [0x6f, 0x40]);
+        }
+    }
+
+    /// Every single-character substitution of a Quantus address fails the checksum, and an
+    /// address truncated or with a foreign prefix is not answered as Quantus.
+    #[test]
+    fn a_malformed_quantus_address_is_not_confidently_classified() {
+        for pos in 0..QUANTUS_MASTER.len() {
+            let mut bad = QUANTUS_MASTER.as_bytes().to_vec();
+            bad[pos] = if bad[pos] == b'2' { b'3' } else { b'2' };
+            let bad = String::from_utf8(bad).unwrap();
+            assert_ne!(detect_family(&bad), Some(Family::Quantus), "{bad}");
+        }
+        assert_ne!(
+            detect_family(&QUANTUS_MASTER[..QUANTUS_MASTER.len() - 1]),
+            Some(Family::Quantus)
+        );
+        // Same account id and a valid checksum, but prefix 42 (generic substrate): not Quantus.
+        let raw = base58::decode(QUANTUS_MASTER).unwrap();
+        let mut body = vec![42u8];
+        body.extend_from_slice(&raw[2..34]);
+        let mut pre = b"SS58PRE".to_vec();
+        pre.extend_from_slice(&body);
+        body.extend_from_slice(&crate::hash::blake2b512(&pre)[..2]);
+        let generic = base58::encode(&body);
+        assert_ne!(detect_family(&generic), Some(Family::Quantus));
+    }
+
+    #[test]
+    fn quantus_is_compatible_only_with_itself() {
+        assert!(matches!(
+            check(QUANTUS_MASTER, Family::Noid),
+            Verdict::Mismatch {
+                detected: Family::Quantus,
                 expected: Family::Noid
             }
         ));

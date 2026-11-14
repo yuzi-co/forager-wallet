@@ -1,6 +1,6 @@
 # Forager Wallet
 
-**Offline payout-address and key generation for 33 cryptocurrencies.** No pool, no GPU, no network.
+**Offline payout-address and key generation for 34 cryptocurrencies.** No pool, no GPU, no network.
 
 ```sh
 cargo install forager-wallet
@@ -40,7 +40,7 @@ Run `cargo test` to check the known-answer vectors yourself.
 ## Offline by construction
 
 The dependency list is `k256`, `bip32`, `zeroize`, `sha2`, `pbkdf2`, `unicode-normalization`,
-`blake2b_simd`, `getrandom`, `num-bigint`, `num-traits`. **None of them can open a socket.** You can
+`blake2b_simd`, `getrandom`, `num-bigint`, `num-traits`, `ml-dsa`, `qp-poseidon-core`. **None of them can open a socket.** You can
 confirm the no-network claim by reading `Cargo.toml`, without reading a line of code.
 
 Private keys and seeds are zeroed on drop. Both crates are `#![forbid(unsafe_code)]`.
@@ -108,11 +108,13 @@ code — so publishing costs nothing and buys a claim that can actually be verif
 
 ## Supported coins
 
-33 coins across twelve address families: Taproot (bech32m), SegWit v0 (bech32), P2PKH
+35 coins across fourteen address families: Taproot (bech32m), SegWit v0 (bech32), P2PKH
 (base58check), Ethereum (EIP-55), CryptoNote/Monero, Kaspa-family (CashAddr), Ergo, Alephium, XDAG,
-Warthog, Conflux Core Space (CIP-37) and Parano1d. Two curves, secp256k1 and Ed25519, carry all of
-them but Parano1d, whose address is a Poseidon2b hash of the secret itself. For `noid` the printed
-secret is the wallet master secret the official Parano1d wallet imports.
+Warthog, Epic Cash epicbox, Conflux Core Space (CIP-37), Parano1d and Quantus (SS58). Two curves,
+secp256k1 and Ed25519, carry all of them but Parano1d, whose address is a Poseidon2b hash of the
+secret itself, and Quantus, whose address hashes an ML-DSA-87 public key. For `noid` the printed
+secret is the wallet master secret the official Parano1d wallet imports. For `quan` it is the
+32-byte ML-DSA-87 seed.
 
 **[crates/wallet/COINS.md](crates/wallet/COINS.md)** documents every coin with its address form and
 HD path, the three HD purposes (BIP44 / BIP84 / BIP86), and how to generate for a coin that is not

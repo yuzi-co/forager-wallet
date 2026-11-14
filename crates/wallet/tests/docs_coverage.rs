@@ -339,7 +339,14 @@ fn leading_characters(spec: &coins::CoinSpec) -> Leading {
         // `bech32m("o", payload)`: the HRP verbatim and the separator, then the payload's 5-bit
         // groups (`codec::bech32::encode_bech32m_bytes`). There is no witness version, so the
         // first data character is already key-dependent: `o1` is all that is forced.
+        // SS58 prefix 189 is the two bytes `6f 40`, which base58 renders as `qz` for every
+        // account id (every sample in the KAT, and the published addresses, open `qz`).
+        coins::FamilyParams::Quantus => Leading::Forced("qz".to_string()),
         coins::FamilyParams::Noid => Leading::Forced(format!("{}1", coins::NOID_HRP)),
+        // `base58check([0x01, 0x00] ‖ 02|03 ‖ key)`: the version bytes and the `02`/`03` lead fix
+        // the top bytes, so the first two characters are always `es` (the fixed-fill brackets run
+        // `esWJ`..`esaC`; epic-wallet documents mainnet as `es`).
+        coins::FamilyParams::Epic => Leading::Forced("es".to_string()),
         coins::FamilyParams::Warthog => Leading::Undecided(
             "the address is bare hex of a key-dependent hash with no version byte or prefix, so \
              its first character is the high nibble of HASH160's first byte"

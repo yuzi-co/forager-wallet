@@ -28,6 +28,14 @@ pub(crate) fn blake2b256(data: &[u8]) -> [u8; 32] {
     out
 }
 
+/// BLAKE2b with the default 64-byte digest: the SS58 checksum hash (`SS58PRE ‖ prefix ‖ payload`).
+pub(crate) fn blake2b512(data: &[u8]) -> [u8; 64] {
+    let hash = blake2b_simd::Params::new().hash_length(64).hash(data);
+    let mut out = [0u8; 64];
+    out.copy_from_slice(hash.as_bytes());
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Keccak-256 (original Keccak, pad byte `0x01` — NOT FIPS-202 SHA3-256).
 //

@@ -23,7 +23,9 @@ Run `forager-wallet list` for the live table — this file documents it, and a t
 | Alephium | base58(0x00 ‖ Blake2b256(compressed pubkey)), no checksum | secp256k1 |
 | XDAG | base58check(HASH160(pubkey)) with **no** version byte | secp256k1 |
 | Warthog | hex(HASH160(pubkey) ‖ SHA256(HASH160)[..4]) — single SHA-256, no version byte | secp256k1 |
+| Epic Cash | base58check([0x01, 0x00] ‖ compressed pubkey) + `@epicbox.epiccash.com` | secp256k1 |
 | Parano1d | bech32m("o", Poseidon2b(spend secret)), no witness version; spend secret 0 derived from a master secret | none |
+| Quantus | SS58 (prefix 189) of Poseidon2(ML-DSA-87 public key) | ML-DSA-87 (FIPS 204) |
 
 ## The coin table
 
@@ -81,9 +83,11 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `alph` | Alephium | Alephium | `1…` | — |
 | `xdag` | XDAG | XDAG | no fixed prefix | — |
 | `wart` | Warthog | Warthog | no fixed prefix | — |
+| `epic` | Epic Cash | Epic Cash | `es…` | — |
 | `noid` | Parano1d | Parano1d | `o1…` | — |
+| `quan` | Quantus | Quantus | `qz…` | — |
 
-Five rows need a word of explanation:
+Six rows need a word of explanation:
 
 - **`scash`** — `bc1q…` is not a typo. Scash left Bitcoin's base58 and bech32 parameters unchanged,
   so a Scash address is byte-identical to the Bitcoin address for the same key, and no encoding can
@@ -97,6 +101,14 @@ Five rows need a word of explanation:
   hex with a **single**-SHA-256 checksum instead of base58check's double. Hex is fixed-width and
   positional, so every address is exactly 48 characters — but the first of them is the high nibble
   of a key-dependent hash byte, so it ranges over `0`–`f` and no prefix exists to document.
+- **`epic`** — an epicbox address is `base58check([0x01, 0x00] ‖ compressed pubkey)`, 52
+  characters beginning `es`, printed as `<52 chars>@epicbox.epiccash.com` (the default relay, no
+  port: the pool accepts only an absent port or 443). The key is a random secp256k1 key.
+  **epic-wallet derives its own epicbox key from the wallet seed, so this address is NOT
+  restorable from an Epic wallet seed.** It is format-valid and owned by whoever holds the printed
+  secret, but Epic payouts are interactive Mimblewimble slates exchanged through epicbox, so
+  receiving needs software that holds that key and speaks epicbox. Check with the pool before
+  mining to it. Mainnet only: `--testnet` is refused.
 - **`noid`** — the secret is a Parano1d wallet **master** secret, not a private key on a curve.
   Parano1d has no curve and no public key: the address is a Poseidon2b hash of a spend secret, and
   the wallet derives spend secret `n` from its one 32-byte master secret. The official wallet
@@ -107,6 +119,17 @@ Five rows need a word of explanation:
   60 characters, `o1` plus 58 key-dependent characters, and is the same on every network. Source:
   `ignotusnemo/parano1d@52938433` (Apache-2.0), `noid_node/src/wallet/keystore.rs` and
   `noid_poseidon2b/src/primitives.rs`.
+- **`quan`** — Quantus Network (HeroMiners lists it as QUANTUS). The address is the SS58 string,
+  network prefix 189, of `Poseidon2(ML-DSA-87 public key)`; the two prefix bytes `6f 40` make every
+  address open `qz`. The printed secret is the 32-byte ML-DSA-87 seed (FIPS 204 `xi`), as 64 hex
+  characters, not a mnemonic, and `restore` takes that hex form only. Key generation uses RustCrypto
+  `ml-dsa`, not Quantus's GPL-3.0 crate. The known-answer test reproduces quantus-cli's published
+  no-derivation address for its test mnemonic (BIP-39 seed, first 32 bytes as `xi`), which pins the
+  whole chain from seed to address. **Unverified:** importing a raw seed into any Quantus wallet.
+  quantus-cli only imports mnemonics, so a seed printed here cannot be re-imported there; keep it,
+  and give pools only the address. The address is the same on every network. Sources:
+  `Quantus-Network/chain` `primitives/dilithium-crypto`, `Quantus-Network/qp-poseidon` (MIT-0) and
+  `Quantus-Network/quantus-cli` `src/cli/address_format.rs`, `src/wallet/mod.rs`.
 - **`firo`** — the table's only `(most keys)` row. Version byte `0x52` puts the 25-byte payload
   astride the base58 boundary between digit 32 (`Z`) and digit 33 (`a`): the interval the payload
   can occupy lies 1.222% below that boundary and 98.778% above it, so 98.8% of keys render `a…` and
@@ -236,7 +259,9 @@ token's `--legacy` form and its WIF inherit the same assumption.
 --coin alephium:
 --coin xdag:
 --coin warthog:
+--coin epic:
 --coin noid:
+--coin quantus:
 ```
 
 Integers are decimal or `0x`-prefixed hex. An unrecognised parameter is rejected rather than

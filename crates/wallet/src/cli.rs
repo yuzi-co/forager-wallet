@@ -210,12 +210,28 @@ fn cmd_new(coin: &str, net: Network, legacy: bool, testnet: bool) -> Result<(), 
         println!("Import into the official Oyster wallet is UNVERIFIED; for a long-term");
         println!("wallet, generate it in Oyster and pass only the address to --wallet.");
     }
+    if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Epic) {
+        println!();
+        println!("NOT restorable from an Epic wallet seed: epic-wallet derives its epicbox key");
+        println!("from the wallet seed, this key is random. The address is format-valid and");
+        println!("owned by whoever holds the raw key above. Epic payouts are interactive");
+        println!("Mimblewimble slates exchanged through epicbox, so receiving needs software");
+        println!("that holds this key and speaks epicbox. Confirm with the pool before mining.");
+    }
     if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Noid) {
         println!();
         println!("The raw key is the Parano1d wallet MASTER secret. The official wallet");
         println!("imports it as-is: \"Restore from existing key\" in the GUI, or pipe it to");
         println!("`parano1d --import-wallet-secret` (which replaces that node's wallet.key).");
         println!("The address above is the wallet's address 0, the one it shows first.");
+    }
+
+    if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Quantus) {
+        println!();
+        println!("The raw key is the 32-byte ML-DSA-87 seed (FIPS 204 xi), not a mnemonic.");
+        println!("The address scheme matches a quantus-cli known-answer vector, but importing");
+        println!("a raw seed into Quantus's own wallet is UNVERIFIED (its mnemonic import");
+        println!("cannot produce this seed). Keep the seed and pass only the address to --wallet.");
     }
 
     Ok(())
@@ -413,8 +429,10 @@ fn family_label(family: Family) -> &'static str {
         Family::Alephium => "Alephium P2PKH",
         Family::Xdag => "XDAG (Base58Check, no version)",
         Family::Warthog => "Warthog (hex, single-SHA256 checksum)",
+        Family::Epic => "Epic Cash (epicbox, Base58Check)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m, Poseidon2b)",
+        Family::Quantus => "Quantus (SS58 189, Poseidon2 of ML-DSA-87 key)",
     }
 }
 
@@ -470,6 +488,14 @@ mod tests {
         let master = "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a";
         assert!(run(&argv(&["restore", master, "--coin", "noid"])).is_ok());
         assert!(run(&argv(&["restore", "not-hex", "--coin", "noid"])).is_err());
+    }
+
+    #[test]
+    fn new_and_restore_quantus() {
+        assert!(run(&argv(&["new", "--coin", "quan"])).is_ok());
+        let seed = "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a";
+        assert!(run(&argv(&["restore", seed, "--coin", "quan"])).is_ok());
+        assert!(run(&argv(&["restore", "not-hex", "--coin", "quan"])).is_err());
     }
 
     #[test]

@@ -54,7 +54,8 @@ The known-answer vectors are in this crate's tests, so you can check the scheme 
 ## Offline by construction
 
 The crate depends on `k256`, `bip32`, `zeroize`, `sha2`, `pbkdf2`, `unicode-normalization`,
-`blake2b_simd`, `getrandom`, `num-bigint`, `num-traits` and `forager-addr`. **None of them can open
+`blake2b_simd`, `getrandom`, `num-bigint`, `num-traits`, `ml-dsa`, `qp-poseidon-core` and
+`forager-addr`. **None of them can open
 a socket.** You can confirm the no-network claim by reading `Cargo.toml`, without reading any code.
 
 BIP-39 (mnemonic ↔ entropy, and phrase → seed) is implemented in this crate rather than delegated,
