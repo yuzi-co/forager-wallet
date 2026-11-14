@@ -38,6 +38,9 @@ pub enum Family {
     /// SHA-256 checksum instead of Base58Check's double. No version byte, no prefix,
     /// network-agnostic; always 48 characters.
     Warthog,
+    /// Epic Cash epicbox address: `Base58Check([0x01, 0x00] ‖ compressed_pubkey)` followed by
+    /// `@<relay domain>`. Mainnet only here; the base58 part is 52 characters and begins `es`.
+    Epic,
     /// Conflux Core Space (CIP-37): the keccak160 of the uncompressed pubkey with its leading four
     /// bits forced to `type.user`, encoded with the CashAddr checksum under CIP-37's own base32
     /// alphabet as `<prefix>:<payload><8-char checksum>`.
@@ -58,6 +61,14 @@ pub enum Family {
 /// on every network: `ignotusnemo/parano1d@52938433` `noid_poseidon2b/src/primitives.rs`
 /// `ADDRESS_HRP`.
 pub const NOID_HRP: &str = "o";
+
+/// Version bytes of a mainnet Epic Cash epicbox address (`[0x01, 0x00]`). Source:
+/// `EpicCash/epic-wallet` `libwallet/src/epicbox_address.rs` (`version_bytes`).
+pub const EPICBOX_VERSION: [u8; 2] = [0x01, 0x00];
+
+/// The epicbox relay domain appended to a printed address. The default relay, with no port: the
+/// pool accepts only an absent port or 443.
+pub const EPICBOX_DEFAULT_DOMAIN: &str = "epicbox.epiccash.com";
 
 /// Payload bytes in a Parano1d (NOID) address: one Poseidon2b digest, two GF(2^128) lanes.
 pub const NOID_ADDRESS_LEN: usize = 32;
@@ -153,6 +164,9 @@ pub enum FamilyParams {
     /// Warthog has no per-coin parameters — the address is network-agnostic (no version byte, no
     /// prefix). The node uses the same encoding on testnet.
     Warthog,
+    /// Epic has no per-coin parameters: the version bytes are the protocol constant
+    /// [`EPICBOX_VERSION`] and only mainnet is supported.
+    Epic,
     /// Conflux Core Space: the network prefix that precedes the `:`, per network.
     ///
     /// CIP-37 fixes the version byte at `0x00` for every address it defines, so the prefix is the
@@ -184,6 +198,7 @@ impl FamilyParams {
             FamilyParams::Alephium => Family::Alephium,
             FamilyParams::Xdag => Family::Xdag,
             FamilyParams::Warthog => Family::Warthog,
+            FamilyParams::Epic => Family::Epic,
             FamilyParams::Conflux { .. } => Family::Conflux,
             FamilyParams::Noid => Family::Noid,
         }
@@ -601,6 +616,19 @@ pub static COINS: &[CoinSpec] = &[
         hd_slip44: None,
         params: FamilyParams::Warthog,
     },
+    // ---- Epic Cash family ----
+    // Epic Cash (EPIC): an epicbox address is Base58Check([0x01, 0x00] ‖ compressed secp256k1
+    // pubkey) (Bitcoin alphabet, SHA256d checksum), 52 characters starting `es`, followed by
+    // `@<relay domain>`. Source: EpicCash/epic-wallet libwallet/src/epicbox_address.rs +
+    // libwallet/src/base58.rs; pool-side validation in epic-nodejs-pool lib/utils.js
+    // (`parseMinerAddress`). The wallet derives its own epicbox key from the wallet seed, so an
+    // address minted here from a random key is NOT restorable from an Epic wallet seed.
+    CoinSpec {
+        ticker: "epic",
+        name: "Epic Cash",
+        hd_slip44: None,
+        params: FamilyParams::Epic,
+    },
     // ---- Parano1d family ----
     // Parano1d (NOID): address = bech32m("o", Poseidon2b_ADDRFIX(spend_secret)), a 32-byte hash of
     // the secret with no curve and no version byte. The wallet holds one 32-byte master secret and
@@ -865,6 +893,18 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         caveat: None,
     },
     TokenSyntax {
+        family: "epic",
+        keys: &[],
+        flags: &[],
+        syntax: "epic:",
+        example: "epic:",
+        caveat: Some(
+            "The key is a random secp256k1 key, not one derived from an Epic wallet seed, so the\n\
+             address cannot be restored from an Epic wallet. Epic payouts are interactive\n\
+             Mimblewimble slates exchanged through epicbox. Mainnet only.",
+        ),
+    },
+    TokenSyntax {
         family: "noid",
         keys: &[],
         flags: &[],
@@ -996,6 +1036,7 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
         "alephium" => FamilyParams::Alephium,
         "xdag" => FamilyParams::Xdag,
         "warthog" => FamilyParams::Warthog,
+        "epic" => FamilyParams::Epic,
         "noid" => FamilyParams::Noid,
         // Unreachable while `TOKEN_GRAMMAR` and this match list the same families — the lookup above
         // already rejected any name the grammar does not carry.  Report it instead of panicking, so a
@@ -1252,6 +1293,7 @@ mod tests {
             Family::Ergo,
             Family::Alephium,
             Family::Xdag,
+            Family::Epic,
         ] {
             assert!(reachable.contains(&f), "no coin token produces {f:?}");
         }
@@ -1384,6 +1426,7 @@ mod tests {
                 FamilyParams::Alephium => Family::Alephium,
                 FamilyParams::Xdag => Family::Xdag,
                 FamilyParams::Warthog => Family::Warthog,
+                FamilyParams::Epic => Family::Epic,
                 FamilyParams::Conflux { .. } => Family::Conflux,
                 FamilyParams::Noid => Family::Noid,
             };

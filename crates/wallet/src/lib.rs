@@ -321,6 +321,12 @@ pub(crate) fn dispatch(
         coins::FamilyParams::Alephium => families::alephium::address(d),
         coins::FamilyParams::Xdag => families::xdag::address(d),
         coins::FamilyParams::Warthog => families::warthog::address(d),
+        // Epic's version bytes are a mainnet constant; floonet (`[1, 0x88]`) is not modelled, and
+        // the pool validates `[1, 0]` only, so a testnet request is refused rather than faked.
+        coins::FamilyParams::Epic => match net {
+            Network::Mainnet => families::epic::address(d),
+            Network::Testnet => return Err(WalletError::UnsupportedTestnet),
+        },
         // Parano1d is network-agnostic too, and has no curve: `d` is unused, and the input bytes
         // are the wallet master secret. The public entry points route around this arm (see
         // `noid_wallet`) so that a master secret outside the secp256k1 range still derives; this

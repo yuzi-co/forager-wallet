@@ -110,7 +110,7 @@ code — so publishing costs nothing and buys a claim that can actually be verif
 
 33 coins across twelve address families: Taproot (bech32m), SegWit v0 (bech32), P2PKH
 (base58check), Ethereum (EIP-55), CryptoNote/Monero, Kaspa-family (CashAddr), Ergo, Alephium, XDAG,
-Warthog, Conflux Core Space (CIP-37) and Parano1d. Two curves, secp256k1 and Ed25519, carry all of
+Warthog, Epic Cash epicbox, Conflux Core Space (CIP-37) and Parano1d. Two curves, secp256k1 and Ed25519, carry all of
 them but Parano1d, whose address is a Poseidon2b hash of the secret itself. For `noid` the printed
 secret is the wallet master secret the official Parano1d wallet imports.
 

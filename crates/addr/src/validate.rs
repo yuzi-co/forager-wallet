@@ -25,10 +25,16 @@ use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 
 use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote};
-use crate::coins::{Family, FamilyParams, COINS, NOID_ADDRESS_LEN, NOID_HRP};
+use crate::coins::{Family, FamilyParams, COINS, EPICBOX_VERSION, NOID_ADDRESS_LEN, NOID_HRP};
 
 /// Characters in a Warthog address: 24 bytes (`hash160(20) ‖ checksum(4)`), two nibbles each.
 const WARTHOG_HEX_LEN: usize = 48;
+
+/// Base58 characters in an epicbox address: 39 bytes (`version(2) ‖ pubkey(33) ‖ checksum(4)`).
+const EPICBOX_BASE58_LEN: usize = 52;
+
+/// Payload length of an epicbox address once the checksum is removed: `version(2) ‖ pubkey(33)`.
+const EPICBOX_PAYLOAD_LEN: usize = 35;
 
 /// Longest address string detection will look at, in bytes.
 ///
@@ -100,6 +106,12 @@ pub fn detect_family(addr: &str) -> Option<Family> {
                 return Some(Family::Warthog);
             }
         }
+    }
+
+    // 1c. Epic Cash epicbox address: `Base58Check([1, 0] ‖ pubkey(33))` with an optional
+    //     `epicbox://` prefix and an optional `@domain[:port]` suffix. See [`epic_epicbox`].
+    if epic_epicbox(a) {
+        return Some(Family::Epic);
     }
 
     // 2. Kaspa-family CashAddr: `<prefix>:<payload>` where the CashAddr checksum verifies and the
@@ -223,6 +235,49 @@ pub fn detect_family(addr: &str) -> Option<Family> {
     None
 }
 
+/// Whether `a` is an Epic Cash epicbox address: `[epicbox://]<52 base58>[@host[:port]]`, where the
+/// base58 part decodes to 39 bytes, the SHA256d checksum holds, the version bytes are
+/// [`EPICBOX_VERSION`] and the key is a compressed secp256k1 point prefix (`02` or `03`).
+///
+/// Source: `EpicCash/epic-wallet` `libwallet/src/epicbox_address.rs` and the pool's
+/// `epic-nodejs-pool` `lib/utils.js` `parseMinerAddress`, which applies the same rules. The
+/// checksum and the version bytes are what make this unambiguous: no other modelled family decodes
+/// to a 35-byte base58check payload with a `01 00` lead. The derivation side is `forager-wallet`'s
+/// `families/epic.rs`.
+fn epic_epicbox(a: &str) -> bool {
+    let rest = a.strip_prefix("epicbox://").unwrap_or(a);
+    let (body, domain) = match rest.split_once('@') {
+        Some((body, domain)) => (body, Some(domain)),
+        None => (rest, None),
+    };
+    if body.len() != EPICBOX_BASE58_LEN {
+        return false;
+    }
+    if let Some(domain) = domain {
+        let (host, port) = match domain.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (domain, None),
+        };
+        let host_ok = !host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+        let port_ok = port.is_none_or(|p| p.bytes().all(|b| b.is_ascii_digit()));
+        if !host_ok || !port_ok {
+            return false;
+        }
+    }
+    let Some(raw) = base58::decode(body) else {
+        return false;
+    };
+    let Some(payload) = base58::verify_check(&raw) else {
+        return false;
+    };
+    payload.len() == EPICBOX_PAYLOAD_LEN
+        && payload.starts_with(&EPICBOX_VERSION)
+        && matches!(payload[EPICBOX_VERSION.len()], 0x02 | 0x03)
+}
+
 /// The outcome of checking one address against the family a pool is expected to pay out in. The
 /// caller decides how loud to be: `Mismatch` is a real, actionable warning; `Unrecognized` is a
 /// soft "couldn't classify" note; `Ok` is silent.
@@ -272,6 +327,7 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Alephium => "Alephium",
         Family::Xdag => "XDAG",
         Family::Warthog => "Warthog (hex)",
+        Family::Epic => "Epic Cash (epicbox)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m o1)",
     }
@@ -1193,6 +1249,22 @@ mod tests {
     fn detects_warthog() {
         assert_eq!(detect_family(WARTHOG_CLIENT_LIB), Some(Family::Warthog));
         assert_eq!(check(WARTHOG_CLIENT_LIB, Family::Warthog), Verdict::Ok);
+    }
+
+    /// A real published epicbox address: the epic-nodejs-pool donation address. Detection must
+    /// verify the checksum and version bytes, and accept the optional `@domain` suffix.
+    const EPIC_POOL_ADDR: &str = "esYd2vznULSZPn8yQG1SpViF1xEdSs4Fa4n91tkhdSxZCNVdkBt4";
+
+    #[test]
+    fn detects_epic_epicbox() {
+        let full = format!("{EPIC_POOL_ADDR}@epicbox.epiccash.com");
+        for a in [EPIC_POOL_ADDR, full.as_str()] {
+            assert_eq!(detect_family(a), Some(Family::Epic), "{a}");
+            assert_eq!(check(a, Family::Epic), Verdict::Ok);
+        }
+        // Last character changed: checksum fails.
+        let bad = format!("{}5@epicbox.epiccash.com", &EPIC_POOL_ADDR[..51]);
+        assert_ne!(detect_family(&bad), Some(Family::Epic));
     }
 
     /// A Warthog address is bare hex with nothing to anchor it but its checksum, so the checksum is

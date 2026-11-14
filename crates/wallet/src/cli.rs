@@ -210,6 +210,14 @@ fn cmd_new(coin: &str, net: Network, legacy: bool, testnet: bool) -> Result<(), 
         println!("Import into the official Oyster wallet is UNVERIFIED; for a long-term");
         println!("wallet, generate it in Oyster and pass only the address to --wallet.");
     }
+    if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Epic) {
+        println!();
+        println!("NOT restorable from an Epic wallet seed: epic-wallet derives its epicbox key");
+        println!("from the wallet seed, this key is random. The address is format-valid and");
+        println!("owned by whoever holds the raw key above. Epic payouts are interactive");
+        println!("Mimblewimble slates exchanged through epicbox, so receiving needs software");
+        println!("that holds this key and speaks epicbox. Confirm with the pool before mining.");
+    }
     if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Noid) {
         println!();
         println!("The raw key is the Parano1d wallet MASTER secret. The official wallet");
@@ -413,6 +421,7 @@ fn family_label(family: Family) -> &'static str {
         Family::Alephium => "Alephium P2PKH",
         Family::Xdag => "XDAG (Base58Check, no version)",
         Family::Warthog => "Warthog (hex, single-SHA256 checksum)",
+        Family::Epic => "Epic Cash (epicbox, Base58Check)",
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m, Poseidon2b)",
     }

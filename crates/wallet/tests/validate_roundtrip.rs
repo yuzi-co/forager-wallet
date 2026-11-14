@@ -76,7 +76,7 @@ fn every_generated_cryptonote_address_round_trips_through_detection() {
 
             // One character changed in the key region: same length, same leading tag, same
             // charset. Only the checksum separates it from the address above.
-            let mut bytes = w.address.clone().into_bytes();
+            let mut bytes = w.address.into_bytes();
             let j = bytes.len() / 2;
             bytes[j] = if bytes[j] == b'A' { b'B' } else { b'A' };
             let bad = String::from_utf8(bytes).unwrap();
@@ -176,7 +176,7 @@ fn every_generated_ergo_address_round_trips_through_detection() {
 
             // One flipped character in the middle: same length, same leading character, same
             // charset. Only the checksum separates it from the address above.
-            let mut bytes = w.address.clone().into_bytes();
+            let mut bytes = w.address.into_bytes();
             let i = bytes.len() / 2;
             bytes[i] = if bytes[i] == b'A' { b'B' } else { b'A' };
             let bad = String::from_utf8(bytes).unwrap();
@@ -291,6 +291,81 @@ fn every_generated_warthog_address_round_trips_through_detection() {
             assert_ne!(
                 detect_family(&bad),
                 Some(Family::Warthog),
+                "corruption at {pos} of {} still detected",
+                w.address
+            );
+        }
+    }
+}
+
+/// Every Epic epicbox address the generator emits round-trips through detection, the published pool
+/// address is detected as Epic, and corruption of the base58 part or of the version bytes is not.
+///
+/// The `@domain` suffix and the optional `epicbox://` prefix are accepted; a port other than digits
+/// or a bad hostname is not.
+#[test]
+fn every_generated_epic_address_round_trips_through_detection() {
+    // The epic-nodejs-pool donation address, a real published epicbox address.
+    let published = "esYd2vznULSZPn8yQG1SpViF1xEdSs4Fa4n91tkhdSxZCNVdkBt4@epicbox.epiccash.com";
+    assert_eq!(detect_family(published), Some(Family::Epic));
+    assert_eq!(check(published, Family::Epic), Verdict::Ok);
+    let bare = &published[..52];
+    assert_eq!(detect_family(bare), Some(Family::Epic));
+    assert_eq!(
+        detect_family(&format!("epicbox://{bare}@epicbox.epiccash.com:443")),
+        Some(Family::Epic)
+    );
+    assert_ne!(
+        detect_family(&format!("{bare}@bad host")),
+        Some(Family::Epic)
+    );
+    assert_ne!(
+        detect_family(&format!("{bare}@x.com:80a")),
+        Some(Family::Epic)
+    );
+
+    let w = forager_wallet::address_from_secret(
+        "epic",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        Network::Mainnet,
+    )
+    .unwrap();
+    assert_eq!(
+        w.address,
+        "esXEUSzaQgaEtFRx69W8DnErs9R6Q6UwgR52Qc2c6mAFtfCu8sku@epicbox.epiccash.com"
+    );
+    assert_eq!(
+        forager_wallet::address_from_secret(
+            "epic",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            Network::Testnet,
+        )
+        .map(|w| w.address),
+        Err(forager_wallet::WalletError::UnsupportedTestnet)
+    );
+
+    for i in 1u32..=32 {
+        let secret = format!("{i:064x}");
+        let w = forager_wallet::address_from_secret("epic", &secret, Network::Mainnet).unwrap();
+        let (b58, domain) = w.address.split_once('@').unwrap();
+        assert_eq!(b58.len(), 52, "key {secret}: {}", w.address);
+        assert!(b58.starts_with("es"), "{}", w.address);
+        assert_eq!(domain, "epicbox.epiccash.com");
+        assert_eq!(
+            detect_family(&w.address),
+            Some(Family::Epic),
+            "{}",
+            w.address
+        );
+
+        // Every single-character corruption of the base58 part must stop being Epic.
+        for pos in 0..52 {
+            let mut bad = w.address.clone().into_bytes();
+            bad[pos] = if bad[pos] == b'2' { b'3' } else { b'2' };
+            let bad = String::from_utf8(bad).unwrap();
+            assert_ne!(
+                detect_family(&bad),
+                Some(Family::Epic),
                 "corruption at {pos} of {} still detected",
                 w.address
             );
