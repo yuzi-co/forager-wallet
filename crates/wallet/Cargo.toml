@@ -1,6 +1,6 @@
 [package]
 name = "forager-wallet"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -27,11 +27,11 @@ num-traits = "0.2"
 sha2 = { workspace = true }
 # Address classification + the coin table. Split out so the closed miner can link classification
 # without linking any key-generation code. See the repository README.
-forager-addr = { path = "../addr", version = "0.4.0" }
+forager-addr = { path = "../addr", version = "0.5.0" }
 # Blake2b-256, for the Ergo P2PK address checksum (already used elsewhere in the workspace for
 # Equihash's consensus-critical Blake2b — same well-vetted crate, not a new supply-chain surface).
 blake2b_simd = "1"
-getrandom = "0.2"
+getrandom = "0.4"
 # BIP44 HD mode (`hd` module, opt-in `forager-wallet new --hd`). `bip32` (iqlusion,
 # Apache-2.0/MIT, actively maintained) provides BIP32/BIP44 derivation on
 # the pure-Rust `k256` secp256k1 backend (BIP39 is this crate's own `bip39` module; `bip32` 0.6

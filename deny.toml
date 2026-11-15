@@ -75,6 +75,15 @@ multiple-versions = "warn"
 wildcards = "warn"
 # Intra-workspace path deps are declared without a version; that's expected here.
 allow-wildcard-paths = true
+# bip32 0.6 depends on bs58 0.5 with its `check` feature, which pins sha2 0.10 and with it the
+# digest 0.10 line (block-buffer, crypto-common, cpufeatures). Everything else here is on sha2 0.11.
+# Neither crate offers a way out: bs58's `check` is not optional in bip32, and bs58 0.5 has no sha2
+# 0.11 release. Skip that subtree for duplicate detection only, so `cargo deny check` stays
+# warning-free; advisories, licenses and the deny list still apply to every crate in it. Remove this
+# when bip32 moves to a bs58 on sha2 0.11.
+skip-tree = [
+    { crate = "bs58@0.5.1", reason = "bip32 0.6 pins bs58 0.5 (sha2 0.10); no newer bs58 to move to" },
+]
 
 # The machine-checked half of the "offline by construction" claim.
 #

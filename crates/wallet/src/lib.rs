@@ -223,21 +223,21 @@ pub fn generate(coin: &str, net: Network) -> Result<Wallet, WalletError> {
         // 32 uniform bytes, as the official wallet's "Create a new 256-bit key" draws them
         // (`Keystore::create_plain`). No rejection sampling: there is no range to sample into.
         let mut master = [0u8; 32];
-        getrandom::getrandom(&mut master).map_err(|_| WalletError::Entropy)?;
+        getrandom::fill(&mut master).map_err(|_| WalletError::Entropy)?;
         let w = noid_wallet(&spec, &master);
         zeroize::Zeroize::zeroize(&mut master);
         return Ok(w);
     }
     if spec.family() == Family::Quantus {
         let mut seed = [0u8; 32];
-        getrandom::getrandom(&mut seed).map_err(|_| WalletError::Entropy)?;
+        getrandom::fill(&mut seed).map_err(|_| WalletError::Entropy)?;
         let w = quantus_wallet(&spec, &seed);
         zeroize::Zeroize::zeroize(&mut seed);
         return Ok(w);
     }
     loop {
         let mut buf = [0u8; 32];
-        getrandom::getrandom(&mut buf).map_err(|_| WalletError::Entropy)?;
+        getrandom::fill(&mut buf).map_err(|_| WalletError::Entropy)?;
         // Rejection sampling: `scalar_in_range` is the single range authority (0 < d < n).
         let Ok(d) = curves::secp256k1::scalar_in_range(&buf) else {
             continue;
