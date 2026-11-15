@@ -12,10 +12,10 @@
 //!   `Version::PubKey` addresses carry.
 //! - [`taptweak_output`] applies the BIP341 output-key tweak on top of it (Taproot / Pearl).
 
-use k256::elliptic_curve::ops::{MulByGenerator, Reduce};
+use k256::elliptic_curve::ops::Reduce;
 use k256::elliptic_curve::point::AffineCoordinates;
-use k256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use k256::{AffinePoint, EncodedPoint, FieldBytes, ProjectivePoint, Scalar, SecretKey, U256};
+use k256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
+use k256::{AffinePoint, FieldBytes, ProjectivePoint, Scalar, Sec1Point, SecretKey};
 
 use crate::hash::tagged_hash;
 use crate::WalletError;
@@ -48,8 +48,8 @@ fn lift_x(x: &[u8; 32]) -> Option<AffinePoint> {
     let mut sec1 = [0u8; 33];
     sec1[0] = 0x02;
     sec1[1..].copy_from_slice(x);
-    let encoded = EncodedPoint::from_bytes(sec1).ok()?;
-    Option::from(AffinePoint::from_encoded_point(&encoded))
+    let encoded = Sec1Point::from_bytes(sec1).ok()?;
+    Option::from(AffinePoint::from_sec1_point(&encoded))
 }
 
 /// Derive the Taproot **internal** x-only key (`bytes(d·G).x`) for private key `d`.
@@ -71,7 +71,7 @@ pub(crate) fn taptweak_output(internal_xonly: &[u8; 32]) -> [u8; 32] {
     // BIP341 takes `t = int(hash_TapTweak(P))` and requires `t < n`; reducing mod n matches the
     // previous implementation bit-for-bit and differs only on a ~2^-128 input.
     let tweak_hash = FieldBytes::from(tagged_hash("TapTweak", internal_xonly));
-    let t = <Scalar as Reduce<U256>>::reduce_bytes(&tweak_hash);
+    let t = <Scalar as Reduce<FieldBytes>>::reduce(&tweak_hash);
     let q = ProjectivePoint::from(internal) + ProjectivePoint::mul_by_generator(&t);
     fb_to_32(&q.to_affine().x())
 }
@@ -79,14 +79,14 @@ pub(crate) fn taptweak_output(internal_xonly: &[u8; 32]) -> [u8; 32] {
 /// 33-byte compressed SEC1 pubkey for secret `d`: 0x02/0x03 ‖ x (prefix by y parity).
 pub(crate) fn pubkey_compressed(d: &Secret) -> [u8; 33] {
     let mut out = [0u8; 33];
-    out.copy_from_slice(d.public_key().to_encoded_point(true).as_bytes());
+    out.copy_from_slice(d.public_key().to_sec1_point(true).as_bytes());
     out
 }
 
 /// 65-byte uncompressed SEC1 pubkey: 0x04 ‖ x ‖ y.
 pub(crate) fn pubkey_uncompressed(d: &Secret) -> [u8; 65] {
     let mut out = [0u8; 65];
-    out.copy_from_slice(d.public_key().to_encoded_point(false).as_bytes());
+    out.copy_from_slice(d.public_key().to_sec1_point(false).as_bytes());
     out
 }
 
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(odd[0], 0x03);
         let lifted = lift_x(&internal_xonly(&d)).unwrap();
         let mut even = [0u8; 33];
-        even.copy_from_slice(lifted.to_encoded_point(true).as_bytes());
+        even.copy_from_slice(lifted.to_sec1_point(true).as_bytes());
         assert_eq!(even[0], 0x02);
         assert_eq!(even[1..], odd[1..]);
     }

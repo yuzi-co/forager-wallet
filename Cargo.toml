@@ -10,7 +10,7 @@ exclude = ["fuzz"]
 # Shared across both crates so the base58check checksum and the address codecs cannot drift onto
 # different SHA-2 implementations.
 [workspace.dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 
 [profile.release]
 strip = true

@@ -33,6 +33,21 @@
 
 use forager_wallet::{bip39, hd};
 
+/// Independent oracle for the BIP-39 seed: raw PBKDF2-HMAC-SHA512 (2048 rounds, salt
+/// `"mnemonic" + passphrase`) over the UTF-8 bytes exactly as given, with NO normalization.
+/// This replaces the `bip32::Mnemonic::to_seed` cross-check, since `bip32` 0.6 dropped its BIP-39
+/// module. It reproduces that function's behaviour byte for byte, including its lack of NFKD.
+fn raw_pbkdf2_seed(phrase: &str, passphrase: &str) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
+        phrase.as_bytes(),
+        format!("mnemonic{passphrase}").as_bytes(),
+        2048,
+        &mut out,
+    );
+    out
+}
+
 /// Canonical BIP39 24-word all-zero-entropy mnemonic (`abandon` ×23 + `art`).
 const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 
@@ -58,10 +73,8 @@ fn bip39_canonical_seed_vector() {
     let ours = bip39::seed(ABANDON, "TREZOR").expect("the canonical phrase must parse");
     assert_eq!(hex(ours.as_bytes()), PUBLISHED);
 
-    let theirs = bip32::Mnemonic::new(ABANDON, Default::default())
-        .unwrap()
-        .to_seed("TREZOR");
-    assert_eq!(hex(theirs.as_bytes()), PUBLISHED);
+    let theirs = raw_pbkdf2_seed(ABANDON, "TREZOR");
+    assert_eq!(hex(&theirs), PUBLISHED);
 }
 
 // ---- Anchor #2: the official BIP-32 test vectors ----
@@ -312,7 +325,7 @@ fn a_leading_zero_private_key_keeps_its_zero_byte_through_this_crates_wif_encode
 
     for (label, seed_hex, path, key_hex, wif) in cases {
         let parsed: bip32::DerivationPath = path.parse().unwrap();
-        let xprv = bip32::XPrv::derive_from_path(unhex(seed_hex), &parsed).unwrap();
+        let xprv = bip32::XPrv::derive_from_path(&unhex(seed_hex), &parsed).unwrap();
         // Fully-qualified to pick the `bip32` trait method (`[u8; 32]`) — exactly the call
         // `hd::derive` makes to obtain the scalar it encodes.
         let key: [u8; 32] = bip32::PrivateKey::to_bytes(xprv.private_key());
@@ -749,12 +762,6 @@ fn twelve_word_mnemonic_validates_and_derives() {
     let acct = hd::derive(ABANDON_12, "", btc, hd::Purpose::Bip84, 0, 0)
         .expect("a valid 12-word phrase must derive");
     assert_eq!(acct.address, "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu");
-
-    // Pin the upstream behaviour this works around, so the test keeps explaining itself.
-    assert!(
-        bip32::Mnemonic::new(ABANDON_12, Default::default()).is_err(),
-        "if bip32 ever accepts 12-word phrases, this regression's cause is gone"
-    );
 }
 
 /// The other newly-legal lengths — 15, 18 and 21 words — validate too.
@@ -847,12 +854,10 @@ fn non_ascii_passphrase_is_nfkd_normalized_through_derive() {
 
     // Point 3: the old, un-normalized behaviour really does diverge. 24 words, because that is the
     // only length `bip32` will parse — which is why defect 2 could only ever be shown there.
-    let unnormalized = bip32::Mnemonic::new(ABANDON, Default::default())
-        .expect("bip32 parses 24-word phrases")
-        .to_seed(NFKD_COMPOSED);
+    let unnormalized = raw_pbkdf2_seed(ABANDON, NFKD_COMPOSED);
     let normalized = bip39::seed(ABANDON, NFKD_COMPOSED).expect("valid phrase");
     assert_ne!(
-        hex(unnormalized.as_bytes()),
+        hex(&unnormalized),
         hex(normalized.as_bytes()),
         "if these agree, the passphrase was not normalized and defect 2 is back"
     );

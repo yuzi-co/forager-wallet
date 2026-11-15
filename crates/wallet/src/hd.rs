@@ -341,13 +341,10 @@ pub fn derive(
     let seed = bip39::seed(phrase, passphrase).map_err(HdError::InvalidMnemonic)?;
     let path_str = format!("m/{}'/{slip44}'/{account}'/0/{index}", purpose.number());
     let path: DerivationPath = path_str.parse().map_err(|_| HdError::Derivation)?;
-    // The seam into `bip32`: only the BIP39 half moved to this crate; CKDpriv is still `bip32`'s.
-    // `bip32::Seed` also zeroizes its 64 bytes on drop, so both ends of the handoff are covered —
-    // what is not is the unnamed `[u8; 64]` temporary the copy passes through, which Rust moves
-    // into `Seed::new` and never gives us a handle on. It is transient stack, identical in kind to
-    // what the previous `mnemonic.to_seed()` call produced, so this is not a regression.
-    let xprv = XPrv::derive_from_path(bip32::Seed::new(*seed.as_bytes()), &path)
-        .map_err(|_| HdError::Derivation)?;
+    // The seam into `bip32`: BIP39 is this crate's own; CKDpriv is `bip32`'s. `bip32` 0.6 takes the
+    // seed as a byte slice, so the 64 bytes are borrowed straight from the zeroizing `Seed` and no
+    // unzeroized copy is made.
+    let xprv = XPrv::derive_from_path(seed.as_bytes(), &path).map_err(|_| HdError::Derivation)?;
 
     // 32-byte child private scalar. Fully-qualified to pick the bip32 trait method (`[u8; 32]`),
     // not k256's inherent `to_bytes` (a GenericArray).
