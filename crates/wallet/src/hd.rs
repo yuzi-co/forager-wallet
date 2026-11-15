@@ -288,7 +288,7 @@ impl std::error::Error for HdError {
 /// it — anyone with it controls every address derived from it.
 pub fn generate_mnemonic() -> Result<Zeroizing<String>, HdError> {
     let mut entropy = [0u8; 32];
-    getrandom::getrandom(&mut entropy).map_err(|_| HdError::Entropy)?;
+    getrandom::fill(&mut entropy).map_err(|_| HdError::Entropy)?;
     // 256 bits of entropy -> 24 words. 32 is one of `bip39::ENTROPY_LENGTHS`, so the encode cannot
     // actually fail; it is still propagated rather than unwrapped, because a panic in a keygen
     // path is never the right failure mode.
