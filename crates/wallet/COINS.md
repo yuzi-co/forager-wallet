@@ -26,6 +26,7 @@ Run `forager-wallet list` for the live table — this file documents it, and a t
 | Epic Cash | base58check([0x01, 0x00] ‖ compressed pubkey) + `@epicbox.epiccash.com` | secp256k1 |
 | Parano1d | bech32m("o", Poseidon2b(spend secret)), no witness version; spend secret 0 derived from a master secret | none |
 | Quantus | SS58 (prefix 189) of Poseidon2(ML-DSA-87 public key) | ML-DSA-87 (FIPS 204) |
+| Nockchain | base58 of the Tip5 digest of the master public key (v1 payee hash), no version byte, **no checksum** | Cheetah over Fp^6 (Goldilocks) |
 
 ## The coin table
 
@@ -86,6 +87,7 @@ may carry exactly one of two markers, and a marker is the only way a row can cla
 | `epic` | Epic Cash | Epic Cash | `es…` | — |
 | `noid` | Parano1d | Parano1d | `o1…` | — |
 | `quan` | Quantus | Quantus | `qz…` | — |
+| `nock` | Nockchain | Nockchain | no fixed prefix | — |
 
 Six rows need a word of explanation:
 
@@ -130,6 +132,28 @@ Six rows need a word of explanation:
   and give pools only the address. The address is the same on every network. Sources:
   `Quantus-Network/chain` `primitives/dilithium-crypto`, `Quantus-Network/qp-poseidon` (MIT-0) and
   `Quantus-Network/quantus-cli` `src/cli/address_format.rs`, `src/wallet/mod.rs`.
+- **`nock`** — Nockchain (LuckyPool and f2pool pay it as the merge-mined half of a Pearl account). The
+  address is the v1 "payee hash": the Tip5 digest of the master Cheetah public key, written as the
+  base58 digits of one integer, `a + b p + c p^2 + d p^3 + e p^4` over the five digest limbs and the
+  Goldilocks prime `p = 2^64 - 2^32 + 1`. It is 54 or 55 characters in practice (pools accept 40 to
+  55) and has **no prefix, no version byte and no checksum**: a mistyped address is still a valid
+  address, funds sent to it are lost, and a transaction id or block id looks identical. Paste it,
+  never retype it, and compare it with what the official wallet shows. The secret is a BIP39
+  mnemonic, 24 words when this tool mints it, with an empty passphrase: the master key is
+  `HMAC-SHA512("Nockchain seed", seed)`, and the address is the master public key's hash (no child
+  key). `nockchain-wallet` conditions its own entropy through Argon2 before it forms a phrase, which
+  only conditions entropy, so a phrase minted here imports there with `import-keys --seedphrase
+  --version 1`. `restore --mnemonic "<words>" --coin nock` re-derives the address from a phrase
+  (any BIP39 length), and `restore <64 hex> --coin nock` from the master secret key the phrase
+  derives (which no wallet imports on its own). The legacy v0 address, the base58 of the 97-byte
+  public key that wallets made before about October 2025 print, is not produced. `new --hd` does not
+  apply: Nockchain is not a BIP44 coin. The address is the same on every network. Source:
+  `zorp-corp/nockchain@ed1edfcc` (MIT OR Apache-2.0), `hoon/common/slip10.hoon`,
+  `hoon/common/ztd/three.hoon` and `hoon/common/tx-engine-0.hoon`. The known-answer tests are the
+  reference's own Hoon vectors for Tip5, the Cheetah curve and the master key of a phrase, and four
+  mnemonic-to-address vectors captured from `nockchain-wallet` built from that commit. **Not
+  checked:** pool payout (no live payout was made), and re-verification after a Nockchain protocol
+  fork: re-run the vectors against the then-current wallet before a release.
 - **`firo`** — the table's only `(most keys)` row. Version byte `0x52` puts the 25-byte payload
   astride the base58 boundary between digit 32 (`Z`) and digit 33 (`a`): the interval the payload
   can occupy lies 1.222% below that boundary and 98.778% above it, so 98.8% of keys render `a…` and
@@ -262,6 +286,7 @@ token's `--legacy` form and its WIF inherit the same assumption.
 --coin epic:
 --coin noid:
 --coin quantus:
+--coin nock:
 ```
 
 Integers are decimal or `0x`-prefixed hex. An unrecognised parameter is rejected rather than

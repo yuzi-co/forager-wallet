@@ -142,4 +142,4 @@ pub(crate) fn address_of_secret_key(secret_key: &[u8; 32]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

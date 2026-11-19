@@ -1613,13 +1613,20 @@ mod tests {
         ));
     }
 
-    /// v1 pkh addresses from the reference wallet's own tests
+    /// v1 pkh addresses. The first three are recipients in the reference wallet's own tests
     /// (`zorp-corp/nockchain@ed1edfcc` `crates/apps/nockchain-wallet/src/tests.rs`). The derivation
-    /// side is `forager-wallet`'s `families/nock.rs`.
-    const NOCK_RECIPIENTS: [&str; 3] = [
+    /// side is `forager-wallet`'s `families/nock.rs` and `nock/`.
+    /// The last four are the master addresses the official `nockchain-wallet` printed for four BIP39
+    /// test phrases (`import-keys --seedphrase --version 1`, then `list-master-addresses`); the
+    /// phrases are in `forager-wallet`'s `nock/kat/wallet_vectors.txt`.
+    const NOCK_RECIPIENTS: [&str; 7] = [
         "9yPePjfWAdUnzaQKyxcRXKRa5PpUzKKEwtpECBZsUYt9Jd7egSDEWoV",
         "9phXGACnW4238oqgvn2gpwaUjG3RAqcxq2Ash2vaKp8KjzSd3MQ56Jt",
         "DKrgXqE8bXR1uBZ3t4vU13m2KquGCDbnn1PeoPL7dxSHTucGPFDPt53",
+        "6Z8NX65NrofLJw7R3LvJ3kVSUs2V5EU3eXrA3H38ezcAmSJW11DChyL",
+        "6LHZokNDAyYonPt6ZDqLPtXAEHseDZn476UHTeFXgcTT6YVSpytysjz",
+        "Aw9GoydrG1qViU6H6A1bB1FJu2HpKWnLoSQtyZFrLhydcxqJFCHYhaD",
+        "8cAGfjfks3doZZ9gz4YR7tsXna6AvJrGEZw6sAf5FS81rk9P8fZjCFC",
     ];
 
     #[test]

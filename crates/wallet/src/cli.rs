@@ -540,6 +540,37 @@ mod tests {
     }
 
     #[test]
+    fn new_and_restore_nock() {
+        assert!(run(&argv(&["new", "--coin", "nock"])).is_ok());
+        let phrase = "ranch matter impact bright candy cattle quarter boost concert toilet wedding identify belt monitor honey suggest cherry cereal ribbon screen cabbage push urban glove";
+        assert!(run(&argv(&["restore", "--mnemonic", phrase, "--coin", "nock"])).is_ok());
+        let sk = "15d912dd505f79e3edb96fa0456bd808af56dd15c91f1ce4511fe03783ed89f6";
+        assert!(run(&argv(&["restore", sk, "--coin", "nock"])).is_ok());
+        assert!(run(&argv(&["restore", "not-hex", "--coin", "nock"])).is_err());
+        // The phrase is checked, and the official wallet takes no passphrase.
+        assert!(run(&argv(&[
+            "restore",
+            "--mnemonic",
+            "not a phrase",
+            "--coin",
+            "nock"
+        ]))
+        .is_err());
+        assert!(run(&argv(&[
+            "restore",
+            "--mnemonic",
+            phrase,
+            "--coin",
+            "nock",
+            "--passphrase",
+            "x"
+        ]))
+        .is_err());
+        // Nockchain is not an HD coin.
+        assert!(run(&argv(&["new", "--hd", "--coin", "nock"])).is_err());
+    }
+
+    #[test]
     fn new_and_restore_quantus() {
         assert!(run(&argv(&["new", "--coin", "quan"])).is_ok());
         let seed = "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a";

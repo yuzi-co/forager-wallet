@@ -17,7 +17,8 @@ assert!(matches!(check("not-an-address", Family::P2pkh), Verdict::Unrecognized))
 
 Families: Taproot (bech32m), SegWit v0 (bech32), P2PKH (base58check), Ethereum (EIP-55),
 CryptoNote, Kaspa-family (CashAddr), Ergo, Alephium, XDAG, Warthog, Epic Cash epicbox, Conflux Core
-Space (CIP-37), Parano1d (bech32m `o1…`) and Quantus (SS58 `qz…`), across 35 coins.
+Space (CIP-37), Parano1d (bech32m `o1…`), Quantus (SS58 `qz…`) and Nockchain (plain base58 of a
+Tip5 digest), across 37 coins.
 
 Classification verifies a checksum wherever the scheme has one: base58check's double-SHA256,
 bech32/bech32m's polymod, CashAddr's polymod, Ergo's Blake2b-256, CryptoNote's Keccak-256, and
@@ -26,7 +27,11 @@ than as a confident answer. Two scheme-level exceptions, stated plainly because 
 limits and not its choices: an Alephium address carries no checksum at all, and an Ethereum address
 written entirely in lower or upper case carries none either — EIP-55 encodes its checksum in the
 case of the hex letters, so a single-case address is valid, common, and unverifiable. Both are
-accepted on their structure.
+accepted on their structure. A Nockchain address is the third: plain base58 of a digest, with no
+checksum and no prefix, so only its charset, its length (40 to 55) and its range (below `p^5`) are
+checked. Detection claims only the 54 and 55 character form, because every shorter length is shared
+with a corrupted address of some other family; `check` applies the pool's full 40 to 55 rule when
+a pool expects Nockchain.
 
 ## What this crate deliberately does not contain
 

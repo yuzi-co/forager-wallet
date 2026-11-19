@@ -673,6 +673,18 @@ pub static COINS: &[CoinSpec] = &[
         hd_slip44: None,
         params: FamilyParams::Quantus,
     },
+    // ---- Nockchain family ----
+    // Nockchain (NOCK): address = base58 of the Tip5 digest of the master Cheetah public key (the
+    // v1 "payee hash"). No version byte, no prefix and no checksum. Source:
+    // zorp-corp/nockchain@ed1edfcc (MIT OR Apache-2.0) hoon/common/slip10.hoon,
+    // hoon/common/ztd/three.hoon, hoon/common/tx-engine-0.hoon. LuckyPool's address pattern is
+    // `^[1-9A-HJ-NP-Za-km-z]{40,55}$`.
+    CoinSpec {
+        ticker: "nock",
+        name: "Nockchain",
+        hd_slip44: None,
+        params: FamilyParams::Nock,
+    },
     // SCASH ("Satoshi Cash", RandomX): address bytes left BYTE-IDENTICAL to Bitcoin — P2PKH
     // 0x00, WIF 0x80, bech32 HRP "bc"; testnet 0x6f/"tb". So a SCASH address is indistinguishable
     // from a BTC one (same encoder, same bytes).  Source: scashnetwork/scash (MIT),
@@ -951,6 +963,17 @@ pub static TOKEN_GRAMMAR: &[TokenSyntax] = &[
         example: "quantus:",
         caveat: None,
     },
+    TokenSyntax {
+        family: "nock",
+        keys: &[],
+        flags: &[],
+        syntax: "nock:",
+        example: "nock:",
+        caveat: Some(
+            "The address is the v1 payee hash of the master key of a BIP39 phrase, and it has no\n\
+             checksum: a mistyped address is still valid and its funds are lost.",
+        ),
+    },
 ];
 
 /// The [`TokenSyntax::caveat`] for a runtime coin token's family, or `None` if it has none.
@@ -1078,6 +1101,7 @@ pub fn parse_token(token: &str) -> Result<CoinSpec, String> {
         "epic" => FamilyParams::Epic,
         "noid" => FamilyParams::Noid,
         "quantus" => FamilyParams::Quantus,
+        "nock" => FamilyParams::Nock,
         // Unreachable while `TOKEN_GRAMMAR` and this match list the same families — the lookup above
         // already rejected any name the grammar does not carry.  Report it instead of panicking, so a
         // grammar row added without an arm here degrades to a clear message; the

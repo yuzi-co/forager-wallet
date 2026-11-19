@@ -10,8 +10,8 @@
 //!   `crates/lib/nockchain-math/src/tip5/hash.rs`.
 //! - The Tip5 public vectors are `tip5_hash_varlen_public_vectors` in the same file.
 //!
-//! The address-level vectors, mnemonic to v1 address from the official wallet, are in
-//! `families::nock`.
+//! - The address-level vectors, mnemonic to v1 address from the official wallet, are
+//!   [`WALLET_VECTORS`], at the end of this file.
 
 use super::curve::{self, Point, GENERATOR, IDENTITY};
 use super::field::{self, Fp6, P};
@@ -322,4 +322,49 @@ fn three_times_the_generator_reference_vector() {
         inf: false,
     };
     assert_eq!(curve::scalar_mul(&[3], &GENERATOR), expected);
+}
+
+/// Mnemonic to address vectors captured from the official wallet, `nockchain-wallet` built from
+/// `zorp-corp/nockchain@ed1edfcc` (`import-keys --seedphrase --version 1`, then
+/// `list-master-addresses` and `show-master-prv`; and `--version 0` for the legacy address). The
+/// phrases are the BIP39 test phrases; the passphrase is empty.
+///
+/// Per line: `mnemonic ; master secret key ; chain code ; public key (97 bytes) ; v1 address ; v0
+/// address`, hex and base58 as the wallet prints them. The chain code and public key are sliced out
+/// of the printed extended keys, not printed directly; the secret key and both addresses are.
+pub(crate) const WALLET_VECTORS: &str = include_str!("kat/wallet_vectors.txt");
+
+#[test]
+fn official_wallet_vectors_derive_end_to_end() {
+    use forager_addr::codec::{base58, nock};
+
+    let mut n = 0;
+    for f in lines(WALLET_VECTORS) {
+        let (phrase, sk, cc, pk, v1, v0) = (f[0], f[1], f[2], f[3], f[4], f[5]);
+        let seed = crate::bip39::seed(phrase, "").expect("valid phrase");
+        let master = master_from_seed(seed.as_bytes());
+        assert_eq!(hexbytes::encode(&master.secret_key[..]), sk, "{phrase}");
+        assert_eq!(hexbytes::encode(&master.chain_code[..]), cc, "{phrase}");
+
+        let point = public_key(&master.secret_key).expect("in range");
+        let serialized = serialize_public_key(&point);
+        assert_eq!(hexbytes::encode(&serialized), pk, "{phrase}");
+        // The v0 address is the base58 of those 97 bytes.
+        assert_eq!(base58::encode(&serialized), v0, "{phrase}");
+
+        // The v1 address is the Tip5 hash of the public key noun.
+        let digest = public_key_hash(&point);
+        assert_eq!(nock::encode_digest(&digest), v1, "{phrase}");
+        assert_eq!(nock::decode_digest(v1), Some(digest), "{phrase}");
+        assert_eq!(
+            super::address_of_secret_key(&master.secret_key).as_deref(),
+            Some(v1)
+        );
+        assert_eq!(
+            forager_addr::detect_family(v1),
+            Some(forager_addr::Family::Nock)
+        );
+        n += 1;
+    }
+    assert_eq!(n, 4);
 }
