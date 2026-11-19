@@ -199,7 +199,10 @@ impl HdAccount {
     /// The secret as one printable line, whatever encoding the family uses.
     pub fn secret_str(&self) -> &str {
         match &self.secret {
-            SecretStd::Wif(s) | SecretStd::EthHex(s) | SecretStd::RawHex(s) => s,
+            SecretStd::Wif(s)
+            | SecretStd::EthHex(s)
+            | SecretStd::RawHex(s)
+            | SecretStd::Mnemonic(s) => s,
             // HD derivation never produces a CryptoNote seed: that family has no BIP32 path.
             SecretStd::MoneroMnemonic { view_key_hex, .. } => view_key_hex,
         }

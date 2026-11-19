@@ -3,3 +3,4 @@ pub mod bech32;
 pub mod cashaddr;
 pub mod conflux;
 pub mod cryptonote;
+pub mod nock;

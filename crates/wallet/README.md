@@ -9,6 +9,7 @@ forager-wallet new --hd --coin btc                        # BIP39 mnemonic, 24 w
 forager-wallet new --hd --all --purpose taproot           # every HD coin at m/86'
 forager-wallet restore <secret-or-wif> --coin btc         # re-derive from a key you hold
 forager-wallet restore --mnemonic "<12–24 words>" --coin btc
+forager-wallet new --coin nock                            # Nockchain: 24-word phrase + v1 address
 ```
 
 `--hd` derives from a BIP39 mnemonic. A phrase this tool **mints** is always 24 words (256-bit
@@ -30,10 +31,11 @@ generate for a coin that is not in the table yet, with worked examples.
 **A wrong address means unspendable funds, and no software can undo that.** Verify, then mine.
 
 Every address family here is clean-room — re-derived from the published standard — and locked by a
-known-answer test. The one exception is Parano1d (`noid`): it has no standard to re-derive from, so
-its Poseidon2b constants are copied from the project's Apache-2.0 reference node (see
-[`NOTICE`](NOTICE)) and its known-answer vectors were captured from that node's own key store. That
-proves the *scheme* is right. It does not prove *your* address is right. Only an independent
+known-answer test. The exceptions are Parano1d (`noid`) and Nockchain (`nock`): neither has a
+standard to re-derive from, so their constants are copied from the projects' reference code (see
+[`NOTICE`](NOTICE)). Parano1d's known-answer vectors were captured from that node's own key store;
+Nockchain's are the reference's own Hoon test vectors plus mnemonic-to-address vectors captured
+from the official `nockchain-wallet`. That proves the *scheme* is right. It does not prove *your* address is right. Only an independent
 re-derivation does that.
 
 1. Generate an address and back up the secret. It is printed once and never stored.
@@ -41,7 +43,10 @@ re-derivation does that.
    - single-key: any standard WIF importer;
    - `--hd`: any standard BIP39 wallet, from the same mnemonic and the same path;
    - `noid`: the official Parano1d wallet, by importing the master secret ("Restore from existing
-     key"). Its first address must match.
+     key"). Its first address must match;
+   - `nock`: the official `nockchain-wallet` (`import-keys --seedphrase --version 1`, then
+     `list-master-addresses`), or any other Nockchain wallet, from the same 24 words. A Nockchain
+     address has **no checksum**: a mistyped one is still valid, and its funds are lost.
 
    `forager-wallet restore` is a cheap first check, but it is **not independent** — it re-runs the
    same code that minted the address. Only other software proves the address.

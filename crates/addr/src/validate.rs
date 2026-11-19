@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
-use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote};
+use crate::codec::{base58, bech32, cashaddr, conflux, cryptonote, nock};
 use crate::coins::{
     Family, FamilyParams, COINS, EPICBOX_VERSION, NOID_ADDRESS_LEN, NOID_HRP, QUANTUS_SS58_PREFIX,
 };
@@ -239,6 +239,17 @@ pub fn detect_family(addr: &str) -> Option<Family> {
         return Some(family);
     }
 
+    // 6. Nockchain: plain base58 of a Tip5 digest, with no checksum and no prefix, so nothing
+    //    anchors it but its shape. Last, so every family with a checksum has had its chance first,
+    //    and narrowed to the 54 and 55 characters a real digest has (see
+    //    [`nock::TYPICAL_MIN_LEN`]). Any shorter length is shared with a corrupted address of
+    //    another family (an Ergo address is 51 characters), and answering `Nock` for it would turn a
+    //    soft "can't tell" into a confident wrong mismatch. [`check`] still accepts the full 40 to 55
+    //    range when a pool expects Nock.
+    if a.len() >= nock::TYPICAL_MIN_LEN && nock::decode_digest(a).is_some() {
+        return Some(Family::Nock);
+    }
+
     None
 }
 
@@ -305,6 +316,12 @@ pub fn check(addr: &str, expected: Family) -> Verdict {
     match detect_family(addr) {
         Some(f) if families_compatible(f, expected) => Verdict::Ok,
         Some(detected) => Verdict::Mismatch { detected, expected },
+        // A NOCK address has no checksum, so detection only claims the 54 and 55 character form.
+        // When the pool expects NOCK and nothing with a checksum claimed the string, the pool's own
+        // rule (40 to 55 base58 characters, a value below `p^5`) is the fair test.
+        None if expected == Family::Nock && nock::decode_digest(addr.trim()).is_some() => {
+            Verdict::Ok
+        }
         None => Verdict::Unrecognized,
     }
 }
@@ -338,6 +355,7 @@ pub fn family_name(f: Family) -> &'static str {
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m o1)",
         Family::Quantus => "Quantus (SS58 189, qz)",
+        Family::Nock => "Nockchain (base58 payee hash, no checksum)",
     }
 }
 
@@ -1592,6 +1610,79 @@ mod tests {
                 Family::Alephium
             ),
             Verdict::Mismatch { .. }
+        ));
+    }
+
+    /// v1 pkh addresses. The first three are recipients in the reference wallet's own tests
+    /// (`zorp-corp/nockchain@ed1edfcc` `crates/apps/nockchain-wallet/src/tests.rs`). The derivation
+    /// side is `forager-wallet`'s `families/nock.rs` and `nock/`.
+    /// The last four are the master addresses the official `nockchain-wallet` printed for four BIP39
+    /// test phrases (`import-keys --seedphrase --version 1`, then `list-master-addresses`); the
+    /// phrases are in `forager-wallet`'s `nock/kat/wallet_vectors.txt`.
+    const NOCK_RECIPIENTS: [&str; 7] = [
+        "9yPePjfWAdUnzaQKyxcRXKRa5PpUzKKEwtpECBZsUYt9Jd7egSDEWoV",
+        "9phXGACnW4238oqgvn2gpwaUjG3RAqcxq2Ash2vaKp8KjzSd3MQ56Jt",
+        "DKrgXqE8bXR1uBZ3t4vU13m2KquGCDbnn1PeoPL7dxSHTucGPFDPt53",
+        "6Z8NX65NrofLJw7R3LvJ3kVSUs2V5EU3eXrA3H38ezcAmSJW11DChyL",
+        "6LHZokNDAyYonPt6ZDqLPtXAEHseDZn476UHTeFXgcTT6YVSpytysjz",
+        "Aw9GoydrG1qViU6H6A1bB1FJu2HpKWnLoSQtyZFrLhydcxqJFCHYhaD",
+        "8cAGfjfks3doZZ9gz4YR7tsXna6AvJrGEZw6sAf5FS81rk9P8fZjCFC",
+    ];
+
+    #[test]
+    fn detects_nock() {
+        for a in NOCK_RECIPIENTS {
+            assert_eq!(detect_family(a), Some(Family::Nock), "{a}");
+            assert_eq!(check(a, Family::Nock), Verdict::Ok, "{a}");
+        }
+        assert_eq!(
+            detect_family(&format!(
+                "  {}
+",
+                NOCK_RECIPIENTS[0]
+            )),
+            Some(Family::Nock)
+        );
+    }
+
+    /// There is no checksum, so what can fail is the range and the shape. Detection claims only
+    /// the 54 and 55 character form; a corrupted address of another family must not become Nock.
+    #[test]
+    fn nock_detection_is_narrow_but_the_pool_rule_is_honoured_by_check() {
+        // Above p^5: 55 characters of the highest digit.
+        assert_eq!(detect_family(&"z".repeat(55)), None);
+        assert_eq!(check(&"z".repeat(55), Family::Nock), Verdict::Unrecognized);
+        // 56 characters, 39 characters, and a character outside the alphabet.
+        assert_eq!(detect_family(&"2".repeat(56)), None);
+        assert_eq!(check(&"2".repeat(39), Family::Nock), Verdict::Unrecognized);
+        let zero = format!("{}0", NOCK_RECIPIENTS[0].trim_end_matches('V'));
+        assert_eq!(detect_family(&zero), None);
+        // A short, in-range string: the pool would accept it, detection does not claim it.
+        let short = "2".repeat(45);
+        assert_eq!(detect_family(&short), None);
+        assert_eq!(check(&short, Family::Nock), Verdict::Ok);
+        // The Ergo address of the Ergo tests, one character short, stays unclassified.
+        let ergo = &ERGO_MAINNET[..ERGO_MAINNET.len() - 1];
+        assert_ne!(detect_family(ergo), Some(Family::Nock));
+    }
+
+    #[test]
+    fn nock_is_compatible_only_with_itself_and_a_checksummed_address_wins() {
+        assert!(matches!(
+            check(NOCK_RECIPIENTS[0], Family::Taproot),
+            Verdict::Mismatch {
+                detected: Family::Nock,
+                expected: Family::Taproot
+            }
+        ));
+        // An address another family's checksum accepts is never answered as Nock, even when a
+        // pool expects Nock: that is a real misconfiguration worth the warning.
+        assert!(matches!(
+            check("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", Family::Nock),
+            Verdict::Mismatch {
+                detected: Family::Ethereum,
+                ..
+            }
         ));
     }
 }

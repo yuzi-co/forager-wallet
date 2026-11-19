@@ -113,6 +113,17 @@ pub fn run(args: &[String]) -> Result<(), CliError> {
         // `restore` re-derives an address you already hold the secret for. With `--mnemonic` it is
         // the HD path; otherwise it takes a single key. `inspect`/`address` are the older names for
         // the single-key form and keep working.
+        // Nockchain derives from a bare BIP39 phrase through its own SLIP-10 variant, not from a
+        // BIP44 path, so it does not go through the HD table.
+        Some("restore")
+            if args.iter().any(|a| a == "--mnemonic")
+                && coin
+                    .as_deref()
+                    .and_then(|c| crate::resolve_spec(c).ok())
+                    .is_some_and(|s| s.family() == Family::Nock) =>
+        {
+            cmd_restore_phrase(args, coin.as_deref().unwrap_or_default())
+        }
         Some("restore") if args.iter().any(|a| a == "--mnemonic") => cmd_new_hd(args),
         Some("restore") | Some("inspect") | Some("address") => {
             const USAGE: &str = "usage: forager-wallet restore <secret-hex-or-wif> --coin <ticker> [--testnet] [--legacy]\n   \
@@ -185,6 +196,16 @@ fn cmd_new(coin: &str, net: Network, legacy: bool, testnet: bool) -> Result<(), 
         SecretStd::RawHex(key) => {
             println!("  raw key : {key}");
         }
+        SecretStd::Mnemonic(phrase) => {
+            let words: Vec<&str> = phrase.split_whitespace().collect();
+            println!(
+                "  {}-word BIP39 mnemonic. THIS IS YOUR WALLET RESTORE KEY, back it up:",
+                words.len()
+            );
+            for (i, word) in words.iter().enumerate() {
+                println!("    {:2}. {word}", i + 1);
+            }
+        }
     }
 
     println!();
@@ -226,6 +247,17 @@ fn cmd_new(coin: &str, net: Network, legacy: bool, testnet: bool) -> Result<(), 
         println!("The address above is the wallet's address 0, the one it shows first.");
     }
 
+    if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Nock) {
+        println!();
+        println!(
+            "This is a Nockchain v1 address (the hash of the master public key). The mnemonic"
+        );
+        println!("imports into the official wallet: `nockchain-wallet import-keys --seedphrase");
+        println!("--version 1`. Before mining to the address, import the mnemonic there (or into");
+        println!("another Nockchain wallet) and confirm that it shows the same address.");
+        println!("A Nockchain address has NO checksum: a mistyped address is still a valid");
+        println!("address, and funds sent to it are lost. Never retype it, paste it.");
+    }
     if crate::resolve_spec(coin).map(|s| s.family()) == Ok(Family::Quantus) {
         println!();
         println!("The raw key is the 32-byte ML-DSA-87 seed (FIPS 204 xi), not a mnemonic.");
@@ -364,6 +396,22 @@ fn cmd_new_hd(args: &[String]) -> Result<(), CliError> {
     Ok(())
 }
 
+/// `forager-wallet restore --mnemonic "<words>" --coin nock`: re-derive the address of a Nockchain
+/// phrase. Prints the address and nothing secret, like the single-key `restore`.
+fn cmd_restore_phrase(args: &[String], coin: &str) -> Result<(), CliError> {
+    if parse_value(args, "--passphrase").is_some() || args.iter().any(|a| a == "--all") {
+        return Err(err(
+            "Nockchain restores from the bare phrase: the official wallet uses an empty BIP39              passphrase, and --all is for HD coins",
+        ));
+    }
+    let phrase = parse_value(args, "--mnemonic").ok_or_else(|| {
+        err("usage: forager-wallet restore --mnemonic \"<12/15/18/21/24 words>\" --coin <ticker>")
+    })?;
+    let w = crate::address_from_mnemonic(coin, phrase).map_err(|e| err(e.to_string()))?;
+    println!("{}", w.address);
+    Ok(())
+}
+
 fn cmd_inspect(coin: &str, secret_hex: &str, net: Network, legacy: bool) -> Result<(), CliError> {
     let w = crate::address_from_secret_kind(coin, secret_hex, net, legacy)
         .map_err(|e| err(e.to_string()))?;
@@ -433,6 +481,7 @@ fn family_label(family: Family) -> &'static str {
         Family::Conflux => "Conflux Core Space (CIP-37)",
         Family::Noid => "Parano1d (bech32m, Poseidon2b)",
         Family::Quantus => "Quantus (SS58 189, Poseidon2 of ML-DSA-87 key)",
+        Family::Nock => "Nockchain (base58 v1 payee hash, Tip5; no checksum)",
     }
 }
 
@@ -488,6 +537,37 @@ mod tests {
         let master = "d008285e7bbc3fc1374e12978cbb5a434a5e9e8129e26b883761f6ec6f2b385a";
         assert!(run(&argv(&["restore", master, "--coin", "noid"])).is_ok());
         assert!(run(&argv(&["restore", "not-hex", "--coin", "noid"])).is_err());
+    }
+
+    #[test]
+    fn new_and_restore_nock() {
+        assert!(run(&argv(&["new", "--coin", "nock"])).is_ok());
+        let phrase = "ranch matter impact bright candy cattle quarter boost concert toilet wedding identify belt monitor honey suggest cherry cereal ribbon screen cabbage push urban glove";
+        assert!(run(&argv(&["restore", "--mnemonic", phrase, "--coin", "nock"])).is_ok());
+        let sk = "15d912dd505f79e3edb96fa0456bd808af56dd15c91f1ce4511fe03783ed89f6";
+        assert!(run(&argv(&["restore", sk, "--coin", "nock"])).is_ok());
+        assert!(run(&argv(&["restore", "not-hex", "--coin", "nock"])).is_err());
+        // The phrase is checked, and the official wallet takes no passphrase.
+        assert!(run(&argv(&[
+            "restore",
+            "--mnemonic",
+            "not a phrase",
+            "--coin",
+            "nock"
+        ]))
+        .is_err());
+        assert!(run(&argv(&[
+            "restore",
+            "--mnemonic",
+            phrase,
+            "--coin",
+            "nock",
+            "--passphrase",
+            "x"
+        ]))
+        .is_err());
+        // Nockchain is not an HD coin.
+        assert!(run(&argv(&["new", "--hd", "--coin", "nock"])).is_err());
     }
 
     #[test]

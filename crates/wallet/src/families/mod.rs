@@ -4,6 +4,7 @@ pub(crate) mod cryptonote;
 pub(crate) mod epic;
 pub(crate) mod ergo;
 pub(crate) mod ethereum;
+pub(crate) mod nock;
 pub(crate) mod noid;
 pub mod p2pkh;
 pub(crate) mod quantus;

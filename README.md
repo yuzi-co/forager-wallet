@@ -1,6 +1,6 @@
 # Forager Wallet
 
-**Offline payout-address and key generation for 34 cryptocurrencies.** No pool, no GPU, no network.
+**Offline payout-address and key generation for 37 cryptocurrencies.** No pool, no GPU, no network.
 
 ```sh
 cargo install forager-wallet
@@ -20,16 +20,19 @@ forager-wallet restore --mnemonic "<12–24 words>" --coin btc
 **A wrong address means unspendable funds, and no software can undo that.**
 
 Every address family here is clean-room — re-derived from the published standard — and locked by a
-known-answer test. The one exception is Parano1d (`noid`), which has no standard to re-derive from:
-its Poseidon2b constants are copied from the project's Apache-2.0 reference node (see
-[`NOTICE`](NOTICE)), and its known-answer vectors were captured from that node's own key store.
-That proves the *scheme*. It does not prove *your* address. Only an independent re-derivation does
+known-answer test. The exceptions are Parano1d (`noid`) and Nockchain (`nock`), which have no
+standard to re-derive from: their constants are copied from the projects' reference code (see
+[`NOTICE`](NOTICE)). Parano1d's known-answer vectors were captured from that node's own key
+store; Nockchain's are the reference's own Hoon test vectors plus mnemonic-to-address vectors
+captured from the official `nockchain-wallet`. That proves the *scheme*. It does not prove *your* address. Only an independent re-derivation does
 that.
 
 1. Generate an address and back up the secret. It is printed once and never stored.
 2. Re-derive the same address in software that is not this tool — any standard WIF importer for a
    single key, any standard BIP39 wallet for an `--hd` mnemonic, the official Parano1d wallet for a
-   `noid` master secret. (`forager-wallet restore` re-derives
+   `noid` master secret, the official `nockchain-wallet` (`import-keys --seedphrase --version 1`) for
+   a `nock` mnemonic. A Nockchain address has no checksum, so a mistyped one is still valid.
+   (`forager-wallet restore` re-derives
    it too, from either the hex, the WIF, or the mnemonic — useful as a first check, but it is not
    independent of this tool.)
 3. Confirm the two match character for character.
@@ -103,18 +106,20 @@ The miner's value is its optimized kernels. This tool's value is that you can re
 Key generation is the one thing a user should never run closed-source: a backdoored entropy source
 is undetectable from the outside and would steal every coin ever mined to the resulting address.
 Nothing here is proprietary — BIP32/39/44, secp256k1, Ed25519, bech32/bech32m, base58check,
-CashAddr and EIP-55 are public standards, and the Parano1d address hash is Apache-2.0 reference
-code — so publishing costs nothing and buys a claim that can actually be verified.
+CashAddr and EIP-55 are public standards, and the Parano1d and Nockchain address schemes are
+open-source reference code — so publishing costs nothing and buys a claim that can actually be verified.
 
 ## Supported coins
 
-35 coins across fourteen address families: Taproot (bech32m), SegWit v0 (bech32), P2PKH
+37 coins across fifteen address families: Taproot (bech32m), SegWit v0 (bech32), P2PKH
 (base58check), Ethereum (EIP-55), CryptoNote/Monero, Kaspa-family (CashAddr), Ergo, Alephium, XDAG,
-Warthog, Epic Cash epicbox, Conflux Core Space (CIP-37), Parano1d and Quantus (SS58). Two curves,
-secp256k1 and Ed25519, carry all of them but Parano1d, whose address is a Poseidon2b hash of the
-secret itself, and Quantus, whose address hashes an ML-DSA-87 public key. For `noid` the printed
-secret is the wallet master secret the official Parano1d wallet imports. For `quan` it is the
-32-byte ML-DSA-87 seed.
+Warthog, Epic Cash epicbox, Conflux Core Space (CIP-37), Parano1d, Quantus (SS58) and Nockchain
+(base58 of a Tip5 digest). Two curves, secp256k1 and Ed25519, carry all of them but Parano1d, whose
+address is a Poseidon2b hash of the secret itself, Quantus, whose address hashes an ML-DSA-87
+public key, and Nockchain, whose key lives on the Cheetah curve over a degree-6 extension of the
+Goldilocks field. For `noid` the printed secret is the wallet master secret the official Parano1d
+wallet imports. For `quan` it is the 32-byte ML-DSA-87 seed. For `nock` it is a 24-word BIP39
+mnemonic, restored with `restore --mnemonic`.
 
 **[crates/wallet/COINS.md](crates/wallet/COINS.md)** documents every coin with its address form and
 HD path, the three HD purposes (BIP44 / BIP84 / BIP86), and how to generate for a coin that is not

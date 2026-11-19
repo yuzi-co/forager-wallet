@@ -347,6 +347,13 @@ fn leading_characters(spec: &coins::CoinSpec) -> Leading {
         // the top bytes, so the first two characters are always `es` (the fixed-fill brackets run
         // `esWJ`..`esaC`; epic-wallet documents mainnet as `es`).
         coins::FamilyParams::Epic => Leading::Forced("es".to_string()),
+        // `base58` of the integer `a + b p + c p^2 + d p^3 + e p^4` over five Tip5 limbs, with no
+        // checksum and no version byte (`forager_addr::codec::nock`). A hash fills the whole range
+        // below `p^5`, so the leading digit is key-dependent and so is the length (54 or 55).
+        coins::FamilyParams::Nock => Leading::Undecided(
+            "the address is the base58 integer of a Tip5 digest with no version byte, prefix or              checksum, so every leading digit below the top of the range occurs"
+                .to_string(),
+        ),
         coins::FamilyParams::Warthog => Leading::Undecided(
             "the address is bare hex of a key-dependent hash with no version byte or prefix, so \
              its first character is the high nibble of HASH160's first byte"

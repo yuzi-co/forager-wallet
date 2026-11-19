@@ -37,6 +37,7 @@ mod families;
 mod hash;
 pub mod hd;
 mod mnemonic;
+mod nock;
 mod poseidon2b;
 mod ripemd160;
 mod secret;
@@ -93,6 +94,10 @@ pub enum SecretStd {
     },
     /// Raw 64-char lowercase hex without prefix (Taproot coins).
     RawHex(String),
+    /// A BIP39 phrase, the wallet's restore secret (Nockchain): 24 words when this crate minted
+    /// it, space-separated. The 64-char hex [`Wallet::secret_hex`] is the master secret key it
+    /// derives, which the official wallet cannot import on its own.
+    Mnemonic(String),
 }
 
 /// A generated or derived payout wallet.
@@ -125,6 +130,8 @@ pub enum WalletError {
     UnsupportedTestnet,
     /// A runtime `family:params` coin token was malformed (carries the parser message).
     BadCoinToken(String),
+    /// A BIP39 phrase was rejected (carries the specific word, position or count).
+    BadMnemonic(String),
 }
 
 impl std::fmt::Display for WalletError {
@@ -142,6 +149,7 @@ impl std::fmt::Display for WalletError {
                 f.write_str("this coin does not support testnet addresses")
             }
             WalletError::BadCoinToken(m) => write!(f, "bad coin token: {m}"),
+            WalletError::BadMnemonic(m) => write!(f, "invalid mnemonic: {m}"),
         }
     }
 }
@@ -206,6 +214,13 @@ pub fn address_from_secret_kind(
             families::noid::parse_master_secret(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
         return Ok(noid_wallet(&spec, &master));
     }
+    // A Nockchain master secret key is a scalar of its own curve, range-checked against that
+    // curve's order and not secp256k1's.
+    if spec.family() == Family::Nock {
+        let sk =
+            families::nock::parse_secret_key(secret_hex).ok_or(WalletError::PrivKeyOutOfRange)?;
+        return nock_wallet(&spec, &sk, None);
+    }
     // Likewise a Quantus seed: any 32 bytes are a valid ML-DSA-87 seed.
     if spec.family() == Family::Quantus {
         let seed = families::quantus::parse_seed(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
@@ -227,6 +242,15 @@ pub fn generate(coin: &str, net: Network) -> Result<Wallet, WalletError> {
         let w = noid_wallet(&spec, &master);
         zeroize::Zeroize::zeroize(&mut master);
         return Ok(w);
+    }
+    if spec.family() == Family::Nock {
+        // 256 bits of entropy become a 24-word BIP39 phrase, which the official wallet imports.
+        let mut entropy = [0u8; 32];
+        getrandom::fill(&mut entropy).map_err(|_| WalletError::Entropy)?;
+        let phrase = bip39::entropy_to_phrase(&entropy);
+        zeroize::Zeroize::zeroize(&mut entropy);
+        let phrase = phrase.map_err(|e| WalletError::BadMnemonic(e.to_string()))?;
+        return address_from_mnemonic(coin, &phrase);
     }
     if spec.family() == Family::Quantus {
         let mut seed = [0u8; 32];
@@ -280,6 +304,45 @@ fn noid_wallet(spec: &coins::CoinSpec, master: &[u8; 32]) -> Wallet {
         secret_hex: hexbytes::encode(master),
         secret_std: SecretStd::RawHex(hexbytes::encode(master)),
     }
+}
+
+/// Derive the payout [`Wallet`] of a Nockchain wallet from its BIP39 phrase (12 to 24 words,
+/// empty passphrase, the official wallet's import). The address is the master key's v1 pkh.
+///
+/// Only coins of the Nockchain family take a bare phrase. Every other coin derives from a BIP44
+/// path instead (see [`hd::derive`]), so it reports [`WalletError::BadMnemonic`] here.
+pub fn address_from_mnemonic(coin: &str, phrase: &str) -> Result<Wallet, WalletError> {
+    let spec = resolve_spec(coin)?;
+    if spec.family() != Family::Nock {
+        return Err(WalletError::BadMnemonic(format!(
+            "{coin} does not derive from a bare BIP39 phrase (see `new --hd`)"
+        )));
+    }
+    let sk = families::nock::secret_key_from_phrase(phrase)
+        .map_err(|e| WalletError::BadMnemonic(e.to_string()))?;
+    let canonical = phrase.split_whitespace().collect::<Vec<_>>().join(" ");
+    nock_wallet(&spec, &sk, Some(canonical))
+}
+
+/// Assemble the [`Wallet`] for a Nockchain master secret key. `phrase` is the mnemonic it came
+/// from, when there is one: a wallet built from the bare key can only print the key.
+fn nock_wallet(
+    spec: &coins::CoinSpec,
+    sk: &[u8; 32],
+    phrase: Option<String>,
+) -> Result<Wallet, WalletError> {
+    let address = families::nock::address(sk).ok_or(WalletError::PrivKeyOutOfRange)?;
+    let secret_hex = hexbytes::encode(sk);
+    Ok(Wallet {
+        coin: spec.ticker,
+        address,
+        privkey: *sk,
+        secret_std: match phrase {
+            Some(p) => SecretStd::Mnemonic(p),
+            None => SecretStd::RawHex(secret_hex.clone()),
+        },
+        secret_hex,
+    })
 }
 
 /// Assemble the [`Wallet`] for a Quantus seed: the 32-byte `xi` of ML-DSA-87 key generation, as 64
@@ -358,6 +421,11 @@ pub(crate) fn dispatch(
         coins::FamilyParams::Noid => families::noid::address(priv32),
         // Quantus likewise: the input bytes are the ML-DSA-87 seed, and `d` is unused.
         coins::FamilyParams::Quantus => families::quantus::address(priv32),
+        // Nockchain: the input bytes are the master secret key, range-checked against the Cheetah
+        // group order here and not against secp256k1's.
+        coins::FamilyParams::Nock => {
+            families::nock::address(priv32).ok_or(WalletError::PrivKeyOutOfRange)?
+        }
 
         coins::FamilyParams::SegwitV0 {
             hrp,
@@ -1187,6 +1255,121 @@ mod tests {
         let again = address_from_secret("noid", &w.secret_hex, Network::Mainnet).unwrap();
         assert_eq!(again.address, w.address);
         assert_eq!(detect_family(&w.address), Some(Family::Noid));
+    }
+
+    /// The 24 words of `hoon/tests/wallet/helpers.hoon` in `zorp-corp/nockchain@ed1edfcc`, and the
+    /// master secret key `hoon/tests/wallet/mod/keygen.hoon` derives from them.
+    const NOCK_HOON_PHRASE: &str = "ranch matter impact bright candy cattle quarter boost concert toilet wedding identify belt monitor honey suggest cherry cereal ribbon screen cabbage push urban glove";
+    const NOCK_HOON_SK: &str = "15d912dd505f79e3edb96fa0456bd808af56dd15c91f1ce4511fe03783ed89f6";
+
+    /// Nockchain through the public seam. The phrase, the secret key it derives, and the fact that
+    /// the three entry points (phrase, secret key hex, `generate`) agree. The official-wallet
+    /// vectors follow.
+    #[test]
+    fn nock_phrase_and_secret_key_agree_through_the_public_seam() {
+        let from_phrase = address_from_mnemonic("nock", NOCK_HOON_PHRASE).unwrap();
+        assert_eq!(from_phrase.coin, "nock");
+        assert_eq!(from_phrase.secret_hex, NOCK_HOON_SK);
+        assert_eq!(
+            from_phrase.secret_std,
+            SecretStd::Mnemonic(NOCK_HOON_PHRASE.to_string())
+        );
+        assert!(
+            (54..=55).contains(&from_phrase.address.len()),
+            "{}",
+            from_phrase.address
+        );
+        assert_eq!(detect_family(&from_phrase.address), Some(Family::Nock));
+
+        let from_key = address_from_secret("nock", NOCK_HOON_SK, Network::Mainnet).unwrap();
+        assert_eq!(from_key.address, from_phrase.address);
+        // The address is network-agnostic.
+        let testnet = address_from_secret("nock", NOCK_HOON_SK, Network::Testnet).unwrap();
+        assert_eq!(testnet.address, from_phrase.address);
+        // Whitespace in a phrase does not matter.
+        let spaced = format!(
+            "  {}
+",
+            NOCK_HOON_PHRASE.replace(' ', "   ")
+        );
+        assert_eq!(
+            address_from_mnemonic("nock", &spaced).unwrap().address,
+            from_phrase.address
+        );
+    }
+
+    /// Every official-wallet vector through the three public entry points. The derivation itself is
+    /// checked stage by stage in `nock::tests`.
+    #[test]
+    fn nock_official_wallet_vectors_through_the_public_seam() {
+        let mut n = 0;
+        for line in nock::tests::WALLET_VECTORS.lines() {
+            let f: Vec<&str> = line.split(" ; ").collect();
+            let (phrase, sk, v1) = (f[0], f[1], f[4]);
+            let w = address_from_mnemonic("nock", phrase).unwrap();
+            assert_eq!(w.address, v1, "{phrase}");
+            assert_eq!(w.secret_hex, sk);
+            assert_eq!(w.secret_std, SecretStd::Mnemonic(phrase.to_string()));
+            let from_key = address_from_secret("nock", sk, Network::Mainnet).unwrap();
+            assert_eq!(from_key.address, v1);
+            assert_eq!(check(v1, Family::Nock), Verdict::Ok);
+            n += 1;
+        }
+        assert_eq!(n, 4);
+    }
+
+    #[test]
+    fn nock_rejects_bad_phrases_and_out_of_range_keys() {
+        assert!(matches!(
+            address_from_mnemonic("nock", "not a phrase"),
+            Err(WalletError::BadMnemonic(_))
+        ));
+        // A valid BIP39 phrase with a bad checksum.
+        let bad = NOCK_HOON_PHRASE.replacen("glove", "ranch", 1);
+        assert!(matches!(
+            address_from_mnemonic("nock", &bad),
+            Err(WalletError::BadMnemonic(_))
+        ));
+        // A coin that is not Nockchain does not take a bare phrase.
+        assert!(matches!(
+            address_from_mnemonic("btc", NOCK_HOON_PHRASE),
+            Err(WalletError::BadMnemonic(_))
+        ));
+        // 0 and the Cheetah group order are not keys; secp256k1's range is irrelevant.
+        let order = "7af2599b3b3f22d0563fbf0f990a37b5327aa72330157722d443623eaed4accf";
+        for bad in ["0".repeat(64), order.to_string(), "f".repeat(64)] {
+            assert_eq!(
+                address_from_secret("nock", &bad, Network::Mainnet).err(),
+                Some(WalletError::PrivKeyOutOfRange),
+                "{bad}"
+            );
+        }
+        // A key above the secp256k1 order but below the Cheetah one is a Nockchain key.
+        let high = "7a".to_string() + &"11".repeat(31);
+        assert!(address_from_secret("nock", &high, Network::Mainnet).is_ok());
+        assert_eq!(
+            address_from_secret("nock", "xyz", Network::Mainnet).err(),
+            Some(WalletError::PrivKeyOutOfRange)
+        );
+    }
+
+    #[test]
+    fn nock_generate_round_trips() {
+        let w = generate("nock", Network::Mainnet).unwrap();
+        let SecretStd::Mnemonic(phrase) = &w.secret_std else {
+            panic!("a minted Nockchain wallet carries its phrase")
+        };
+        assert_eq!(phrase.split_whitespace().count(), 24);
+        let again = address_from_mnemonic("nock", phrase).unwrap();
+        assert_eq!(again.address, w.address);
+        assert_eq!(again.secret_hex, w.secret_hex);
+        assert_eq!(
+            address_from_secret("nock", &w.secret_hex, Network::Mainnet)
+                .unwrap()
+                .address,
+            w.address
+        );
+        assert_eq!(detect_family(&w.address), Some(Family::Nock));
     }
 
     /// Quantus through the public seam: the quantus-cli no-derivation vector, whose seed is the

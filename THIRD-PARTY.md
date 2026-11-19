@@ -2919,6 +2919,8 @@ Not a crate dependency, so `cargo metadata` does not list it.
 | Project | Commit | License | What | Where |
 |---|---|---|---|---|
 | [Parano1d](https://git.parano1d.org/ignotusnemo/parano1d) | `52938433` | Apache-2.0 | Poseidon2b round constants, MDS entries and tower/flat change-of-basis tables; the address and master-to-spend derivations | `crates/wallet/src/poseidon2b/`, `crates/wallet/src/families/noid.rs` |
+| [Nockchain](https://github.com/zorp-corp/nockchain) | `ed1edfcc` | MIT OR Apache-2.0, used under Apache-2.0 | Tip5 lookup table, round constants and MDS column; Cheetah generator and group order; the SLIP-10 master-key, public-key and payee-hash constructions; the Hoon known-answer vectors | `crates/wallet/src/nock/`, `crates/wallet/src/families/nock.rs`, `crates/addr/src/codec/nock.rs` |
 
 Apache-2.0's full text is in [`LICENSE`](LICENSE). The attribution notices it requires, Parano1d's
-own and the hekate-math and binius64 notices it carries, are reproduced in [`NOTICE`](NOTICE).
+own and the hekate-math and binius64 notices it carries, are reproduced in [`NOTICE`](NOTICE), as is the
+Nockchain attribution (that repository ships no NOTICE file of its own).

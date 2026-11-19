@@ -35,3 +35,13 @@ multiply is Forager's own. Parano1d's NOTICE reads, in the part that applies:
 
   Copyright (c) 2025 The Binius Developers
   Copyright (c) 2025 Irreducible, Inc.
+
+crates/wallet/src/nock/ (the Tip5 permutation constants and sponge, the Cheetah curve constants
+and group law, and the master-key derivation), crates/wallet/src/families/nock.rs and
+crates/addr/src/codec/nock.rs (the digest-to-address encoding) contain
+constants and constructions ported from Nockchain, https://github.com/zorp-corp/nockchain,
+commit ed1edfcc, licensed under MIT OR Apache-2.0; they are used here under the Apache License,
+Version 2.0. The reference repository ships no NOTICE file and no copyright line of its own. The
+Goldilocks and extension-field arithmetic, the circulant MDS product and the HMAC-SHA512 are
+Forager's own. The test vectors under crates/wallet/src/nock/kat/ are the Hoon test vectors of that
+repository, hoon/tests/crypto/mod/tip5.hoon and cheetah.hoon, transcribed mechanically.
