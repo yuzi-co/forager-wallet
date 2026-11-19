@@ -37,6 +37,7 @@ mod families;
 mod hash;
 pub mod hd;
 mod mnemonic;
+mod nock;
 mod poseidon2b;
 mod ripemd160;
 mod secret;
@@ -93,6 +94,10 @@ pub enum SecretStd {
     },
     /// Raw 64-char lowercase hex without prefix (Taproot coins).
     RawHex(String),
+    /// A BIP39 phrase, the wallet's restore secret (Nockchain): 24 words when this crate minted
+    /// it, space-separated. The 64-char hex [`Wallet::secret_hex`] is the master secret key it
+    /// derives, which the official wallet cannot import on its own.
+    Mnemonic(String),
 }
 
 /// A generated or derived payout wallet.
@@ -125,6 +130,8 @@ pub enum WalletError {
     UnsupportedTestnet,
     /// A runtime `family:params` coin token was malformed (carries the parser message).
     BadCoinToken(String),
+    /// A BIP39 phrase was rejected (carries the specific word, position or count).
+    BadMnemonic(String),
 }
 
 impl std::fmt::Display for WalletError {
@@ -142,6 +149,7 @@ impl std::fmt::Display for WalletError {
                 f.write_str("this coin does not support testnet addresses")
             }
             WalletError::BadCoinToken(m) => write!(f, "bad coin token: {m}"),
+            WalletError::BadMnemonic(m) => write!(f, "invalid mnemonic: {m}"),
         }
     }
 }
@@ -206,6 +214,13 @@ pub fn address_from_secret_kind(
             families::noid::parse_master_secret(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
         return Ok(noid_wallet(&spec, &master));
     }
+    // A Nockchain master secret key is a scalar of its own curve, range-checked against that
+    // curve's order and not secp256k1's.
+    if spec.family() == Family::Nock {
+        let sk =
+            families::nock::parse_secret_key(secret_hex).ok_or(WalletError::PrivKeyOutOfRange)?;
+        return nock_wallet(&spec, &sk, None);
+    }
     // Likewise a Quantus seed: any 32 bytes are a valid ML-DSA-87 seed.
     if spec.family() == Family::Quantus {
         let seed = families::quantus::parse_seed(secret_hex).ok_or(WalletError::BadPrivKeyHex)?;
@@ -227,6 +242,15 @@ pub fn generate(coin: &str, net: Network) -> Result<Wallet, WalletError> {
         let w = noid_wallet(&spec, &master);
         zeroize::Zeroize::zeroize(&mut master);
         return Ok(w);
+    }
+    if spec.family() == Family::Nock {
+        // 256 bits of entropy become a 24-word BIP39 phrase, which the official wallet imports.
+        let mut entropy = [0u8; 32];
+        getrandom::fill(&mut entropy).map_err(|_| WalletError::Entropy)?;
+        let phrase = bip39::entropy_to_phrase(&entropy);
+        zeroize::Zeroize::zeroize(&mut entropy);
+        let phrase = phrase.map_err(|e| WalletError::BadMnemonic(e.to_string()))?;
+        return address_from_mnemonic(coin, &phrase);
     }
     if spec.family() == Family::Quantus {
         let mut seed = [0u8; 32];
@@ -280,6 +304,45 @@ fn noid_wallet(spec: &coins::CoinSpec, master: &[u8; 32]) -> Wallet {
         secret_hex: hexbytes::encode(master),
         secret_std: SecretStd::RawHex(hexbytes::encode(master)),
     }
+}
+
+/// Derive the payout [`Wallet`] of a Nockchain wallet from its BIP39 phrase (12 to 24 words,
+/// empty passphrase, the official wallet's import). The address is the master key's v1 pkh.
+///
+/// Only coins of the Nockchain family take a bare phrase. Every other coin derives from a BIP44
+/// path instead (see [`hd::derive`]), so it reports [`WalletError::BadMnemonic`] here.
+pub fn address_from_mnemonic(coin: &str, phrase: &str) -> Result<Wallet, WalletError> {
+    let spec = resolve_spec(coin)?;
+    if spec.family() != Family::Nock {
+        return Err(WalletError::BadMnemonic(format!(
+            "{coin} does not derive from a bare BIP39 phrase (see `new --hd`)"
+        )));
+    }
+    let sk = families::nock::secret_key_from_phrase(phrase)
+        .map_err(|e| WalletError::BadMnemonic(e.to_string()))?;
+    let canonical = phrase.split_whitespace().collect::<Vec<_>>().join(" ");
+    nock_wallet(&spec, &sk, Some(canonical))
+}
+
+/// Assemble the [`Wallet`] for a Nockchain master secret key. `phrase` is the mnemonic it came
+/// from, when there is one: a wallet built from the bare key can only print the key.
+fn nock_wallet(
+    spec: &coins::CoinSpec,
+    sk: &[u8; 32],
+    phrase: Option<String>,
+) -> Result<Wallet, WalletError> {
+    let address = families::nock::address(sk).ok_or(WalletError::PrivKeyOutOfRange)?;
+    let secret_hex = hexbytes::encode(sk);
+    Ok(Wallet {
+        coin: spec.ticker,
+        address,
+        privkey: *sk,
+        secret_std: match phrase {
+            Some(p) => SecretStd::Mnemonic(p),
+            None => SecretStd::RawHex(secret_hex.clone()),
+        },
+        secret_hex,
+    })
 }
 
 /// Assemble the [`Wallet`] for a Quantus seed: the 32-byte `xi` of ML-DSA-87 key generation, as 64
@@ -358,6 +421,11 @@ pub(crate) fn dispatch(
         coins::FamilyParams::Noid => families::noid::address(priv32),
         // Quantus likewise: the input bytes are the ML-DSA-87 seed, and `d` is unused.
         coins::FamilyParams::Quantus => families::quantus::address(priv32),
+        // Nockchain: the input bytes are the master secret key, range-checked against the Cheetah
+        // group order here and not against secp256k1's.
+        coins::FamilyParams::Nock => {
+            families::nock::address(priv32).ok_or(WalletError::PrivKeyOutOfRange)?
+        }
 
         coins::FamilyParams::SegwitV0 {
             hrp,

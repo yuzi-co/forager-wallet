@@ -59,6 +59,11 @@ pub enum Family {
     /// curve in the classical sense and no checksum byte beyond SS58's own two. Always 49 or 50
     /// characters, `qz…`, network-agnostic.
     Quantus,
+    /// Nockchain (NOCK): the v1 payee hash, `base58(a + b p + c p^2 + d p^3 + e p^4)` of the Tip5
+    /// digest of the Cheetah public key, over the Goldilocks prime `p`. 40 to 55 characters,
+    /// network-agnostic, and **no checksum**: see [`crate::codec::nock`]. The legacy v0 form, the
+    /// base58 of the 97-byte public key, is not modelled.
+    Nock,
 }
 
 /// SS58 network prefix of a Quantus address: `Ss58AddressFormat::custom(189)` in quantus-cli
@@ -192,6 +197,9 @@ pub enum FamilyParams {
     /// Quantus has no per-coin parameters: the SS58 prefix is the protocol constant
     /// [`QUANTUS_SS58_PREFIX`] on every network.
     Quantus,
+    /// Nockchain has no per-coin parameters: the address is the Tip5 hash of a public key on every
+    /// network (see [`crate::codec::nock`]).
+    Nock,
 }
 
 impl FamilyParams {
@@ -213,6 +221,7 @@ impl FamilyParams {
             FamilyParams::Conflux { .. } => Family::Conflux,
             FamilyParams::Noid => Family::Noid,
             FamilyParams::Quantus => Family::Quantus,
+            FamilyParams::Nock => Family::Nock,
         }
     }
 
@@ -1461,6 +1470,7 @@ mod tests {
                 FamilyParams::Conflux { .. } => Family::Conflux,
                 FamilyParams::Noid => Family::Noid,
                 FamilyParams::Quantus => Family::Quantus,
+                FamilyParams::Nock => Family::Nock,
             };
             assert_eq!(spec.family(), expected, "{}", spec.ticker);
         }

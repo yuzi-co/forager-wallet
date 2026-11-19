@@ -182,6 +182,7 @@ fn declares_testnet(params: &coins::FamilyParams) -> bool {
         | coins::FamilyParams::Epic
         | coins::FamilyParams::Noid
         | coins::FamilyParams::Quantus
+        | coins::FamilyParams::Nock
         | coins::FamilyParams::Ethereum => false,
     }
 }
